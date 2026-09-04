@@ -7990,6 +7990,14 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         try{ box.panel&&box.panel.remove(); }catch(e){}
         _canvasBoxes=_canvasBoxes.filter(b=>b!==box);
       };
+      // Every floating board panel carries data-fk-panel. Used both by the shell, to keep one
+      // panel open at a time, and by the board teardown - the two places that need to remove
+      // panels they did not create.
+      const _canvasClosePanels=()=>{
+        try{
+          _canvasViewport.querySelectorAll("[data-fk-panel]").forEach(el=>el.remove());
+        }catch(e){}
+      };
       let _canvasBrushSize=8, _canvasBrushColor="#111111";
       let _canvasErasing=false;   // eraser is the brush punching holes instead of laying ink
       let _canvasBrushFrame=null, _canvasBrushDrawing=false, _canvasBrushLast=null;
@@ -9645,7 +9653,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         // (frame.x+frame.w+12) and Lineage, Contact sheet and Arrange landed exactly on top
         // of one another. No caller opens a panel from inside another panel - all ten are
         // wired to the selection toolbar - so there is no parent to preserve.
-        _canvasViewport.querySelectorAll("[data-fk-panel]").forEach(el=>el.remove());
+        _canvasClosePanels();
         panel.dataset.fkPanel=titleText;
         // Same reason: a panel is chrome sitting on the board, not board content.
         // Unmarked, its factor buttons and Generate were swallowed by pointer capture.
@@ -12222,6 +12230,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         // than off a frame, it survived the switch and floated over the next project, still
         // anchored to world coordinates of a board that was no longer open.
         [..._canvasBoxes].forEach(_canvasRemoveBox);
+        // Same story for the floating panels, and worse: a panel captures the frames it was
+        // opened on, so an Actions panel left open across a project switch kept a live
+        // Generate button wired to frames from a board that had just been torn down.
+        _canvasClosePanels();
         // Restored, not cleared: this runs inside _canvasLoadBoard, which has already set the
         // flag. Hard-clearing it in the finally released the outer guard mid-load.
         const _prevSuppressClear=_canvasSuppressSave;
