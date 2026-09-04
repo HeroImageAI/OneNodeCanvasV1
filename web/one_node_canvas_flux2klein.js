@@ -8604,6 +8604,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       };
       const _canvasClearGroup=()=>{
         _canvasSelBlockIds=[]; _canvasSelNoteIds=[];
+        // A block that was expanded because it was selected has to collapse again once it
+        // is not.
+        (_canvasBlocks||[]).forEach(x=>{ try{ x._syncCollapse&&x._syncCollapse(); }catch(e){} });
         _canvasPaintGroupHighlight();
       };
       const _canvasSelectFrame=(id)=>{ _canvasClearGroup(); _canvasSetSelection(id==null?[]:[id]); };
@@ -8903,6 +8906,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         return ()=>{ clearTimeout(t); t=setTimeout(()=>_railApplyFilter(),220); };
       })();
 
+      // Shown only once the rail holds images. On an empty board these were 11 permanently
+      // visible controls filtering nothing. _railSyncFilterVis below owns the visibility.
       const _railFilterRow=mk("div",{display:"flex",alignItems:"center",gap:"4px",
         padding:"0 7px 6px 7px",flexShrink:"0"});
       const _railSearchInp=mk("input",{flex:"1",minWidth:"0",background:C.bg2,
@@ -8921,6 +8926,13 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       _railDateSel.addEventListener("pointerdown",e=>e.stopPropagation());
       _railDateSel.onchange=()=>{ _railFilter.days=+_railDateSel.value||0; _railApplyFilter(); };
       _railFilterRow.append(_railSearchInp,_railDateSel);
+      // Kept visible whenever a filter is set even if the result is empty - otherwise a filter
+      // that matches nothing would hide the only means of clearing it.
+      const _railSyncFilterVis=()=>{
+        const has=(_railItems&&_railItems.length)||_railFilterActive();
+        _railFilterRow.style.display=has?"flex":"none";
+        _railColourRow.style.display=has?"flex":"none";
+      };
 
       const _railColourRow=mk("div",{display:"flex",alignItems:"center",gap:"3px",
         padding:"0 7px 6px 7px",flexShrink:"0"});
@@ -9248,7 +9260,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _railLoad=async(reset)=>{
         if(_railLoading) return;
         _railLoading=true;
-        if(reset){ _railItems=[]; _railOffset=0; _railGrid.innerHTML=""; _railPrev.style.display="none"; }
+        if(reset){ _railItems=[]; _railOffset=0; _railGrid.innerHTML=""; _railPrev.style.display="none";
+          _railSyncFilterVis(); }
         tx(_railTitle,"Gallery \u2026");
         try{
           const r=await api.fetchApi(
@@ -9259,6 +9272,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           _railItems.push(...imgs);
           _railOffset=_railItems.length;
           _railAppend(imgs);
+          _railSyncFilterVis();
           _railApplyGridSize();
           // Cells paged in while a filter is active must arrive filtered, not visible.
           if(_railFilterActive()) _railApplyFilter();
@@ -10598,19 +10612,50 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             // overflow:visible, so it paints everywhere but cannot be hit outside that box -
             // clicks are measured against these segments instead.
             const labY=(y1+y2)/2;
+            // "Content" and "Style" say what the user gets; "Composite" and "Reference"
+            // described the implementation. The swap glyph is what makes it read as a
+            // toggle - a static noun never does.
+            const txt=(link.role==="reference"
+              ?(link.active?"Style":"Style (unused)"):"Content")+"  \u21c4";
+            // Width from the text, so the hit box and the pill always agree. A fixed width
+            // drifted from the label as soon as the wording changed.
+            const labW=txt.length*6+12, labH=16;
             _canvasLinkGeom.push({blockId:link.blockId,frameId:link.frameId,
               pts:[[x1,y1],[midX,y1],[midX,y2],[x2,y2]],
-              label:{x:midX,y:labY,w:54,h:16}});
-            // The role, written on the line. Clicking it toggles the role; clicking the rest
-            // of the line selects the connection.
+              label:{x:midX,y:labY,w:labW,h:labH}});
+            // A pill behind the text: without it the role read as an annotation, and the
+            // whole reference feature was unreachable by exploration.
+            const bg=document.createElementNS("http://www.w3.org/2000/svg","rect");
+            bg.setAttribute("x",String(midX));
+            bg.setAttribute("y",String(labY-labH+2));
+            bg.setAttribute("width",String(labW));
+            bg.setAttribute("height",String(labH));
+            bg.setAttribute("rx","4");
+            bg.setAttribute("fill","#141414");
+            bg.setAttribute("stroke",color);
+            bg.setAttribute("stroke-width","1");
+            // The link layer is pointer-events:none, so this has to be re-enabled per element
+            // or the cursor never changes and the pill is decoration rather than a control.
+            bg.style.pointerEvents="auto";
+            bg.style.cursor="pointer";
+            const _toggleRole=(ev)=>{
+              ev.preventDefault(); ev.stopPropagation();
+              const tb=(_canvasBlocks||[]).find(x=>x.id===link.blockId);
+              _canvasToggleSourceRole(tb,link.frameId);
+            };
+            bg.addEventListener("pointerdown",_toggleRole);
+            _canvasLinks.appendChild(bg);
             const t=document.createElementNS("http://www.w3.org/2000/svg","text");
-            t.setAttribute("x",String(midX+5));
+            t.setAttribute("x",String(midX+6));
             t.setAttribute("y",String(labY-4));
             t.setAttribute("font-size","11");
             t.setAttribute("font-weight","700");
             t.setAttribute("fill",color);
-            t.textContent=link.role==="reference"
-              ?(link.active?"Reference":"Reference (unused)"):"Composite";
+            t.style.pointerEvents="auto";
+            t.style.cursor="pointer";
+            t.style.userSelect="none";
+            t.addEventListener("pointerdown",_toggleRole);
+            t.textContent=txt;
             _canvasLinks.appendChild(t);
           }
           const p=document.createElementNS("http://www.w3.org/2000/svg","path");
@@ -11256,6 +11301,39 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
         el.append(head,modeRow,presetRow,_restageHint,ta,quickRow,infRow,palRow,cntRow,arRow,viewRow,srcLbl,goBtn);
 
+        // ---- collapse when idle -------------------------------------------------------
+        // Title, mode and Generate stay; the working rows appear when you are actually in
+        // the block. Blocks were the biggest density contributor on a populated board.
+        const _blkRows=[presetRow,_restageHint,ta,quickRow,infRow,palRow,cntRow,arRow,viewRow,srcLbl];
+        // Tracked explicitly rather than read back from el.matches(":hover"): the CSS
+        // hover state cannot be driven from code and is not reliably settled when
+        // mouseenter fires, so the block would stay collapsed under the cursor.
+        let _blkHover=false;
+        const _blkActive=()=>{
+          try{ if(el.contains(document.activeElement)) return true; }catch(e){}
+          if(_blkHover) return true;
+          return (_canvasSelBlockIds||[]).indexOf(b.id)!==-1;
+        };
+        const _blkSyncCollapse=()=>{
+          if(_blkActive()){
+            // syncMode owns which rows this mode should show - ratio belongs to text-only
+            // Render, views to New Views. Restoring display:"" here would override it.
+            syncMode();
+          }else{
+            _blkRows.forEach(r=>{ if(r) r.style.display="none"; });
+          }
+        };
+        b._syncCollapse=_blkSyncCollapse;
+        el.addEventListener("mouseenter",()=>{ _blkHover=true; _blkSyncCollapse(); });
+        el.addEventListener("mouseleave",()=>{ _blkHover=false; _blkSyncCollapse(); });
+        el.addEventListener("focusin",_blkSyncCollapse);
+        // Focus moving between two controls in the same block reports neither as focused for
+        // an instant; re-checking next tick avoids collapsing mid-edit.
+        el.addEventListener("focusout",()=>setTimeout(_blkSyncCollapse,0));
+        // Deferred: syncMode is declared below this point, and a block created under the
+        // cursor is immediately "active", which would call it inside its temporal dead zone.
+        requestAnimationFrame(_blkSyncCollapse);
+
         const syncMode=()=>{
           modes.forEach(([k])=>{
             const on=b.mode===k;
@@ -11709,13 +11787,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           })();
         }
         const row=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
-        const lbl=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap"}); tx(lbl,"Strength");
-        const inp=mk("input",{flex:"1"},{type:"range",min:"0.05",max:"0.45",step:"0.05",value:"0.2"});
-        const val=mk("div",{fontSize:"8px",color:LIME,width:"30px",textAlign:"right"}); tx(val,"20%");
+        // Same word and same direction as the Actions panel. This slider used to be
+        // "Strength" running the other way, so Refine 35% and the panel's Keep original 65%
+        // were the same render described two ways.
+        const lbl=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap"}); tx(lbl,"Keep original");
+        const inp=mk("input",{flex:"1"},{type:"range",min:"0.55",max:"0.95",step:"0.05",value:"0.8"});
+        const val=mk("div",{fontSize:"8px",color:LIME,width:"30px",textAlign:"right"}); tx(val,"80%");
         inp.oninput=()=>tx(val,Math.round(+inp.value*100)+"%");
         row.append(lbl,inp,val);
-        // Palette influence sits beside Strength here, the same pair the Modify panel shows.
-        // Refine's own Strength is not persisted either - the panel opens fresh each time -
+        // Palette influence sits beside Keep original here, the same pair the Modify panel
+        // shows. Refine's own setting is not persisted either - the panel opens fresh -
         // so this follows that convention rather than inventing a second one.
         const palRow=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
         const palLbl=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap"});
@@ -11740,8 +11821,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             const detail=(ta.value&&ta.value.trim())
               ? ta.value.trim()+", sharp detail, refined materials, clean edges"
               : "sharp detail, refined materials, realistic surface finish, clean edges, high quality render";
-            // influence = 1 - strength, so a low strength keeps the frame nearly intact.
-            const graph=await _canvasBuildI2I(src,detail,1-(+inp.value||0.2),1,null);
+            // The slider is now Keep original, which IS influence - so it passes straight
+            // through. It previously read as Strength and was inverted here instead.
+            const graph=await _canvasBuildI2I(src,detail,(+inp.value||0.8),1,null);
             // Palette influence is independent of Strength: it acts after generation, so
             // a heavy refine with the colours pinned is a valid combination. Skipped at 0.
             let palMeta=null;
@@ -12202,8 +12284,13 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _canvasSyncProjectLabel=()=>{
         if(typeof projectLabel==="undefined"||!projectLabel) return;
-        tx(projectLabel,_canvasProjectName||"No project");
-        projectLabel.title=_canvasProjectName?("Project: "+_canvasProjectName+" \u00b7 click to rename"):"";
+        // The pencil is what makes this read as editable. Without it the name looks like a
+        // status readout sitting next to the Projects button, and clicking to *switch* lands
+        // in Rename instead - the trap this control was reported for.
+        tx(projectLabel,(_canvasProjectName?_canvasProjectName+"  \u270e":"No project"));
+        projectLabel.title=_canvasProjectName
+          ?("Rename \u201c"+_canvasProjectName+"\u201d  \u00b7  use \u25e7 Projects to switch")
+          :"No project open";
       };
 
       // ---- Launcher -------------------------------------------------------
@@ -13856,11 +13943,15 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               "Q cycles selection mode."},
       ];
       const _edSelModeDef=()=>_ED_SEL_MODES.find(m=>m.k===_edSelMode)||_ED_SEL_MODES[0];
+      // Declared here and assigned once the strip exists, so the rail slot, the Q key and
+      // the strip all stay in step no matter which one changed the mode.
+      let _edSyncSelModeStrip=()=>{};
       const _edSyncSelModeBtn=()=>{
         const m=_edSelModeDef();
         const b=_edToolBtns.lasso;
         if(!b) return;
         tx(b,m.icon); b.title=m.hint;
+        _edSyncSelModeStrip();
       };
       // Auto arms the cursor; the click on the canvas is what runs detection. Firing on
       // mode-select would mean cycling PAST auto starts a job nobody asked for, and its
@@ -14029,14 +14120,40 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         _edOpTitle,_edOpInp,_edOpLbl);
       _edOptGroups.fill=_edGroup(_edTolTitle,_edTolInp,_edTolLbl,_edOpTitle.cloneNode(true));
       _edOptGroups.shape=_edGroup(_edSizeLbl.cloneNode(true),_edFillShapeBtn);
+      // The four selection modes, written out. They share one rail slot and one key, which
+      // made Auto select - a backend feature - unreachable unless you already knew it was
+      // there. Shown only while the selection tool is active, like every other group here.
+      const _edSelModeTitle=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap"});
+      tx(_edSelModeTitle,"Select by");
+      const _edSelModeBtns={};
+      _ED_SEL_MODES.forEach(m=>{
+        const b=mk("button",{padding:"3px 7px",fontSize:"8px",fontWeight:"700",
+          borderRadius:"4px",border:`1px solid ${C.border}`,background:C.bg2,
+          color:C.text,cursor:"pointer",whiteSpace:"nowrap"});
+        tx(b,m.label); b.title=m.hint;
+        b.onclick=()=>{ if(_edTool!=="lasso") _edSetTool("lasso"); _edSetSelMode(m.k); };
+        _edSelModeBtns[m.k]=b;
+      });
+      _edOptGroups.selmode=_edGroup(_edSelModeTitle,
+        ..._ED_SEL_MODES.map(m=>_edSelModeBtns[m.k]));
+      _edSyncSelModeStrip=()=>{
+        Object.entries(_edSelModeBtns).forEach(([k,b])=>{
+          const on=(k===_edSelMode);
+          b.style.background=on?LIME:C.bg2; b.style.color=on?"#111":C.text;
+          b.style.borderColor=on?LIME:C.border;
+        });
+      };
       _edOptRow.append(_edColorInp,_edColorHex,_edOptGroups.stroke,_edOptGroups.fill,
-        _edOptGroups.shape,_edSelToMaskBtn,_edMaskToSelBtn,_edSelClearBtn);
+        _edOptGroups.shape,_edOptGroups.selmode,
+        _edSelToMaskBtn,_edMaskToSelBtn,_edSelClearBtn);
       const _edSyncOptRow=()=>{
         const t=_edTool;
         const shape=(t==="line"||t==="rect"||t==="ellipse");
         _edOptGroups.stroke.style.display=(t==="brush"||t==="eraser"||shape)?"flex":"none";
         _edOptGroups.fill.style.display=(t==="fill")?"flex":"none";
         _edOptGroups.shape.style.display=shape?"flex":"none";
+        _edOptGroups.selmode.style.display=(t==="lasso")?"flex":"none";
+        _edSyncSelModeStrip();
         _edSyncSelBtn();
         _edColorInp.style.display=(t==="eraser"||t==="pan"||t==="lasso")?"none":"";
         _edColorHex.style.display=_edColorInp.style.display;
@@ -14386,13 +14503,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _edBlendNote=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.45",display:"none"});
       tx(_edBlendNote,"Around 60% beds a cut-out in with real shadows. Drop to 40% if it is "+
         "redrawing too much and you need your placement held.");
-      const _edInpaintDen=mk("input",{flex:"1",minWidth:"0"},{type:"range",min:"0.2",max:"1",step:"0.05",value:"1"});
+      // Keep original, not Strength: same word and direction as everywhere else. 0 means
+      // replace the masked area completely, which is what Strength 1.00 used to mean.
+      const _edInpaintDen=mk("input",{flex:"1",minWidth:"0"},{type:"range",min:"0",max:"0.8",step:"0.05",value:"0"});
       const _edInpaintDenVal=mk("div",{fontSize:"8px",color:C.dim,minWidth:"26px",textAlign:"right",
         fontVariantNumeric:"tabular-nums"});
-      tx(_edInpaintDenVal,"1.00");
+      tx(_edInpaintDenVal,"0.00");
       _edInpaintDen.oninput=()=>tx(_edInpaintDenVal,(+_edInpaintDen.value).toFixed(2));
-      const _edInpaintDenWrap=_edMiniRow("Strength",_edInpaintDen,_edInpaintDenVal);
-      _edInpaintDenWrap.title="How completely the masked area is replaced. Lower keeps more of what is there.";
+      const _edInpaintDenWrap=_edMiniRow("Keep original",_edInpaintDen,_edInpaintDenVal);
+      _edInpaintDenWrap.title="How much of the masked area survives. 0 replaces it completely; "
+        +"higher keeps more of what is already there.";
       const _edMaskClearBtn=mk("button",{background:"transparent",color:C.muted,
         border:`1px solid ${C.border}`,borderRadius:"5px",padding:"4px 8px",fontSize:"9px",
         cursor:"pointer",alignSelf:"flex-start"});
@@ -14575,7 +14695,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           }else if(_edGenMode==="inpaint"){
             count=1;
             const maskName=await _edMaskToUpload();
-            graphs=[await _edBuildInpaintGraph(src,maskName,subject,+_edInpaintDen.value||1)];
+            // The slider is Keep original; the graph wants denoise, so invert here - the
+            // one place that has to know, rather than in the label.
+            graphs=[await _edBuildInpaintGraph(src,maskName,subject,
+                                               1-(+_edInpaintDen.value||0))];
           }else{
             count=1;
             graphs=[await _canvasBuildI2I(src,subject,(+_edGenInf.value||60)/100,1,"")];
