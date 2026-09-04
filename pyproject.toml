@@ -1,0 +1,20 @@
+[project]
+name = "one-node-canvas-flux2klein"
+description = "An infinite design board for FLUX.2 [klein], inside a single ComfyUI node. Generate, edit, arrange and hand off product and apparel concepts without building a graph."
+version = "1.0.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "psd-tools>=1.17",
+    "potracer>=0.0.4",
+    "vtracer>=0.6",
+]
+
+[project.urls]
+Repository = "https://github.com/HeroImageAI/OneNodeCanvasV1"
+
+[tool.comfy]
+PublisherId = "HeroImageAI"
+DisplayName = "One Node Canvas · FLUX.2 [klein]"
+Icon = ""

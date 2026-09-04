@@ -1,0 +1,13 @@
+# Optional-but-required-for-features dependencies.
+#
+# ComfyUI itself provides torch, numpy, Pillow and aiohttp, so they are not repeated here.
+# Everything below powers a specific feature and the node degrades with a named message when
+# one is absent, rather than failing to load.
+#
+#   psd-tools  Export as PSD (layered, from the editor)
+#   potracer   SVG export of LINE artwork  (bitonal outline tracing)
+#   vtracer    SVG export of FLAT/VECTOR artwork (colour region tracing)
+
+psd-tools>=1.17
+potracer>=0.0.4
+vtracer>=0.6

@@ -1,0 +1,114 @@
+{
+  "FKU:img": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "example.png"
+    },
+    "_meta": { "title": "Load Image" }
+  },
+  "FKU:join": {
+    "class_type": "JoinImageWithAlpha",
+    "inputs": {
+      "image": ["FKU:img", 0],
+      "alpha": ["FKU:img", 1]
+    },
+    "_meta": { "title": "Join Image with Alpha" }
+  },
+  "FKU:resize": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "resize_type": "scale by multiplier",
+      "resize_type.multiplier": 4,
+      "scale_method": "lanczos",
+      "input": ["FKU:join", 0]
+    },
+    "_meta": { "title": "Resize Image/Mask" }
+  },
+  "FKU:pre": {
+    "class_type": "SeedVR2Preprocess",
+    "inputs": {
+      "resized_images": ["FKU:resize", 0]
+    },
+    "_meta": { "title": "Pre-Process SeedVR2 Input" }
+  },
+  "FKU:vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ema_vae_fp16.safetensors"
+    },
+    "_meta": { "title": "Load VAE" }
+  },
+  "FKU:unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "seedvr2_7b_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": { "title": "Load Diffusion Model" }
+  },
+  "FKU:enc": {
+    "class_type": "VAEEncodeTiled",
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 128,
+      "temporal_size": 4096,
+      "temporal_overlap": 8,
+      "pixels": ["FKU:pre", 0],
+      "vae": ["FKU:vae", 0]
+    },
+    "_meta": { "title": "VAE Encode (Tiled)" }
+  },
+  "FKU:cond": {
+    "class_type": "SeedVR2Conditioning",
+    "inputs": {
+      "model": ["FKU:unet", 0],
+      "vae_conditioning": ["FKU:enc", 0]
+    },
+    "_meta": { "title": "Apply SeedVR2 Conditioning" }
+  },
+  "FKU:sampler": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0,
+      "steps": 1,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": ["FKU:unet", 0],
+      "positive": ["FKU:cond", 0],
+      "negative": ["FKU:cond", 1],
+      "latent_image": ["FKU:enc", 0]
+    },
+    "_meta": { "title": "KSampler" }
+  },
+  "FKU:dec": {
+    "class_type": "VAEDecodeTiled",
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 128,
+      "temporal_size": 4096,
+      "temporal_overlap": 8,
+      "samples": ["FKU:sampler", 0],
+      "vae": ["FKU:vae", 0]
+    },
+    "_meta": { "title": "VAE Decode (Tiled)" }
+  },
+  "FKU:post": {
+    "class_type": "SeedVR2PostProcessing",
+    "inputs": {
+      "color_correction_method": "wavelet",
+      "images": ["FKU:dec", 0],
+      "original_resized_images": ["FKU:resize", 0]
+    },
+    "_meta": { "title": "Post-Process SeedVR2 Output" }
+  },
+  "FKU:save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["FKU:post", 0],
+      "filename_prefix": "one-node-flux-2-klein/f2k"
+    },
+    "_meta": { "title": "SaveImage" }
+  }
+}

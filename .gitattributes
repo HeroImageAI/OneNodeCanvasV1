@@ -1,0 +1,7 @@
+# Normalise text to LF in the repository so contributors on other platforms
+# do not see whole-file diffs from line endings alone.
+* text=auto eol=lf
+
+*.png binary
+*.gif binary
+*.jpg binary
