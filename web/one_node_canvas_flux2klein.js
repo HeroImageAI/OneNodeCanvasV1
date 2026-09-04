@@ -7979,6 +7979,17 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       let _canvasTool="select";    // "select" | "brush" | "box"
       let _canvasCamX=S.canvasCam.x, _canvasCamY=S.canvasCam.y, _canvasCamZoom=S.canvasCam.zoom;
       let _canvasBoxes=[];         // in-flight generate-boxes (not persisted)
+      // A box owns two elements in two different parents - the dashed outline in the world
+      // layer and the prompt panel in the viewport - so tearing one down by hand is easy to
+      // get half right. Cancel, a finished generation and clearing the board all go through
+      // here; before this, each open-coded the same three lines and the board teardown was
+      // simply missing.
+      const _canvasRemoveBox=(box)=>{
+        if(!box) return;
+        try{ box.outline&&box.outline.remove(); }catch(e){}
+        try{ box.panel&&box.panel.remove(); }catch(e){}
+        _canvasBoxes=_canvasBoxes.filter(b=>b!==box);
+      };
       let _canvasBrushSize=8, _canvasBrushColor="#111111";
       let _canvasErasing=false;   // eraser is the brush punching holes instead of laying ink
       let _canvasBrushFrame=null, _canvasBrushDrawing=false, _canvasBrushLast=null;
@@ -9522,7 +9533,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           panel.style.left=Math.max(4,sx)+"px"; panel.style.top=(sy+6)+"px";
         };
         box._reposition();
-        cancelBtn.onclick=()=>{ box.outline.remove(); panel.remove(); _canvasBoxes=_canvasBoxes.filter(b=>b!==box); };
+        cancelBtn.onclick=()=>_canvasRemoveBox(box);
         genBtn.onclick=()=>_canvasGenerateBox(box);
         _canvasSetTool("select");
         ta.focus();
@@ -9572,8 +9583,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               const r0=results[0];
               const f=_canvasAddFrame({x:box.x,y:box.y,w:box.w,h:box.h,kind:"gen",
                 filename:r0.filename,subfolder:r0.subfolder||"",type:"output",name:"generated"});
-              box.outline.remove(); box.panel.remove();
-              _canvasBoxes=_canvasBoxes.filter(b=>b!==box);
+              _canvasRemoveBox(box);
               _canvasSelectFrame(f.id);
               _canvasPersistFramesDebounced();
               if(soundEnabled){ try{playDone();}catch(e){} }
@@ -12207,6 +12217,11 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _canvasClearBoard=()=>{
         (_canvasGroups||[]).forEach(g=>{ if(g._el){ g._el.remove(); g._el=null; } });
         _canvasGroups=[]; _canvasNextGroupId=1;
+        // An un-dismissed generate-box is not board data, so nothing here used to remove it -
+        // and because its outline and panel hang off the world and viewport layers rather
+        // than off a frame, it survived the switch and floated over the next project, still
+        // anchored to world coordinates of a board that was no longer open.
+        [..._canvasBoxes].forEach(_canvasRemoveBox);
         // Restored, not cleared: this runs inside _canvasLoadBoard, which has already set the
         // flag. Hard-clearing it in the finally released the outer guard mid-load.
         const _prevSuppressClear=_canvasSuppressSave;
