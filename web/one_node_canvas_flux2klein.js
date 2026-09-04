@@ -12467,7 +12467,22 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         textTransform:"uppercase",color:C.muted});
       const _lchTrashGrid=mk("div",{display:"grid",gap:"10px",
         gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))"});
-      _lchTrashWrap.append(_lchTrashHead,_lchTrashGrid);
+      // Emptying on purpose had no route in: _purge_trash only ages entries out, and never
+      // below TRASH_KEEP_MAX, so reclaiming the space meant deleting files outside the app.
+      // Sits on the section header rather than beside Restore, because it acts on all of
+      // them - a destructive control next to a per-card action invites the wrong click.
+      const _lchTrashBar=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px"});
+      const _lchTrashEmptyBtn=mk("button",{background:"transparent",border:`1px solid ${C.border}`,
+        color:C.muted,borderRadius:"5px",padding:"4px 9px",fontSize:"9px",fontWeight:"700",
+        cursor:"pointer",whiteSpace:"nowrap",flexShrink:"0",transition:"color .12s,border-color .12s"});
+      tx(_lchTrashEmptyBtn,"Empty trash");
+      _lchTrashEmptyBtn.title="Delete every board here permanently. This cannot be undone.";
+      // Red only on hover: destructive when you are on it, quiet when you are not, so it does
+      // not shout over the Restore buttons that are the section's usual purpose.
+      _lchTrashEmptyBtn.onmouseenter=()=>{ _lchTrashEmptyBtn.style.color="#ff6b6b"; _lchTrashEmptyBtn.style.borderColor="#ff6b6b"; };
+      _lchTrashEmptyBtn.onmouseleave=()=>{ _lchTrashEmptyBtn.style.color=C.muted; _lchTrashEmptyBtn.style.borderColor=C.border; };
+      _lchTrashBar.append(_lchTrashHead,_lchTrashEmptyBtn);
+      _lchTrashWrap.append(_lchTrashBar,_lchTrashGrid);
       const _fmtAgo=(ts)=>{
         const secs=Math.max(0,Date.now()/1000-(ts||0));
         if(secs<90) return "just now";
@@ -12486,6 +12501,38 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         if(!items.length) return;
         tx(_lchTrashHead,"Recently deleted \u2014 "+items.length+
           " board"+(items.length>1?"s":"")+", kept 30 days");
+        // Rebound on every load so the confirm can name what is actually there now.
+        _lchTrashEmptyBtn.disabled=false;
+        tx(_lchTrashEmptyBtn,"Empty trash");
+        _lchTrashEmptyBtn.onclick=async()=>{
+          const n=items.length;
+          const frames=items.reduce((a,it)=>a+(it.frames||0),0);
+          // Names the count and the boards themselves: "empty the trash" is easy to agree to
+          // without noticing which work is in it.
+          const names=items.slice(0,4).map(it=>it.name).join(", ")
+            +(n>4?" and "+(n-4)+" more":"");
+          const ok=await _askConfirm(
+            "Permanently delete "+n+" board"+(n>1?"s":"")+"?",
+            names+" \u2014 "+frames+" frame"+(frames===1?"":"s")+" in total. "
+              +"This cannot be undone, and Restore will no longer be able to bring "
+              +(n>1?"them":"it")+" back. The images themselves stay in your output folder.",
+            "Delete permanently");
+          if(!ok) return;
+          _lchTrashEmptyBtn.disabled=true; tx(_lchTrashEmptyBtn,"Emptying\u2026");
+          try{
+            const r=await api.fetchApi("/flux_klein_canvas/project_trash_empty",{method:"POST",
+              headers:{"Content-Type":"application/json"},body:"{}"});
+            if(!r.ok) throw new Error("HTTP "+r.status);
+            const d=await r.json();
+            if(d&&d.failed&&d.failed.length){
+              _canvasShowError("Emptied "+(d.removed||0)+", but "+d.failed.length+
+                " could not be deleted: "+d.failed.map(f=>f.entry).join(", "));
+            }
+          }catch(e){
+            _canvasShowError("Could not empty the trash: "+fmtErr(e));
+          }
+          await _lchLoadTrash();
+        };
         items.forEach(it=>{
           const card=mk("div",{border:`1px solid ${C.border}`,borderRadius:"8px",
             overflow:"hidden",background:C.bg1,display:"flex",flexDirection:"column",opacity:"0.78"});

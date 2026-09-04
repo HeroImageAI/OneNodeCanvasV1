@@ -855,6 +855,37 @@ async def list_trash(request):
     return web.json_response({"trash": out})
 
 
+@PromptServer.instance.routes.post("/flux_klein_canvas/project_trash_empty")
+async def empty_trash(request):
+    """Permanently delete every trashed board. Irreversible - the UI confirms first.
+
+    _purge_trash only ages entries out (and never below TRASH_KEEP_MAX), so without this
+    there was no way to reclaim a deleted board's space on purpose; the only route was
+    deleting the files by hand outside the app.
+
+    Takes no path from the caller at all: it lists the trash folder itself and removes the
+    .json files it finds directly inside. Nothing here can be steered out of that folder.
+    """
+    removed, failed = 0, []
+    try:
+        for fn in os.listdir(_trash_dir()):
+            if not fn.endswith(".json"):
+                continue
+            full = os.path.join(TRASH_DIR, fn)
+            # Skip anything that is not a plain file sitting directly in the trash - a
+            # directory or a link has no business being emptied by this route.
+            if not os.path.isfile(full) or os.path.islink(full):
+                continue
+            try:
+                os.remove(full)
+                removed += 1
+            except Exception as e:
+                failed.append({"entry": fn, "error": str(e)})
+        return web.json_response({"ok": True, "removed": removed, "failed": failed})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.post("/flux_klein_canvas/project_restore")
 async def restore_project(request):
     try:
