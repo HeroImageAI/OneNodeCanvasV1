@@ -7,8 +7,10 @@ CLAUDE.md
 UX-AUDIT.md
 OneNodeCanvas-Full-Upgrade-Plan.md
 
-# Runtime state: boards, palettes and recovery copies belong to the user, not the repo
+# Runtime state: boards, palettes and recovery copies belong to the user, not the repo.
+# These land here once the live ComfyUI folder is a link to this one.
 projects/
+palettes/
 
 # Upstream demo of the OLD single-preview UI (7.2MB). Nothing references it and it no
 # longer shows this software - replace it with a recording of the board, then un-ignore.
