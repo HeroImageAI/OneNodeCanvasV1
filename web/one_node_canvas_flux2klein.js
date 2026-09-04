@@ -6084,7 +6084,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _openMaskOv=(imgName,mode)=>{
         // A working editor, like sketch and the image editor: it holds an unsaved mask, so it
-        // blocks the surface buttons rather than being auto-closed by them.
+        // blocks the surface buttons rather than being auto-closed by them. Measured: this
+        // overlay does cover the top bar (as sketch does, and the image editor does not), so
+        // the guard is belt-and-braces here rather than the only thing refusing the click.
         _canvasSetBoardChromeInert(true);
         // Re-sync inpaint sliders from state — covers values changed outside the editor
         // (e.g. restored from a gallery image's metadata via "Load settings into UI").
