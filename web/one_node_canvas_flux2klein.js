@@ -1672,7 +1672,47 @@ app.registerExtension({
       settingsOverlay.append(settHdr,modGrid,_kvNote,_baseNote,_loraBox,_upBox,prefTitle,soundToggle.el,advUIToggle.el,extLoadersToggle.el,_dsRow);
 
       // ── Overlay helpers ───────────────────────────────────────────────────
+      // The full-screen surfaces - opaque, inset:0, covering the whole node. Two open at
+      // once means the lower one is invisible but still live: focusable inputs, tab order,
+      // its own key handlers. Each registers with its own closer, never a blanket hide,
+      // because closing does real work - the prompt overlay persists its text on the way out.
+      // Two non-members, both on purpose:
+      //   the LoRA manager - translucent backdrop, opened from a button inside Settings, so
+      //     it is a modal on top of a surface rather than a replacement for one;
+      //   the image editor - its Cancel asks before discarding edits, and closing it from
+      //     here would skip that. It is made exclusive from the other side instead.
+      const _fkSurfaces=[];
+      // el may be a getter, for surfaces like Compare that are built fresh on each open and
+      // removed on close, so there is no stable element to hold on to.
+      const _fkSurface=(el,hide)=>{ _fkSurfaces.push({el,hide}); return el; };
+      const _fkSurfaceEl=(sf)=>{
+        try{ return (typeof sf.el==="function")?sf.el():sf.el; }catch(e){ return null; }
+      };
+      const _fkCloseOtherSurfaces=(keep)=>{
+        _fkSurfaces.forEach(sf=>{
+          const el=_fkSurfaceEl(sf);
+          if(!el||el===keep) return;
+          if(el.style.display==="none") return;
+          try{ sf.hide(); }catch(e){ console.warn("[FluxKlein] overlay close:",e); }
+        });
+      };
+      // Every surface fades out on a timer. Reopening the same one inside that window used
+      // to let the stale timer hide it again; the stamp makes a deferred hide check that it
+      // is still the most recent one.
+      const _fkHideAfter=(el,ms,cb)=>{
+        const gen=(el._fkGen=(el._fkGen||0)+1);
+        // Still display:flex while it fades, and the surfaces share a z-index, so without
+        // this the outgoing overlay keeps swallowing clicks aimed at the incoming one.
+        el.style.pointerEvents="none";
+        setTimeout(()=>{
+          if(el._fkGen!==gen) return;
+          el.style.display="none"; if(cb) cb();
+        },ms);
+      };
       const openOverlay=(el)=>{
+        _fkCloseOtherSurfaces(el);
+        el._fkGen=(el._fkGen||0)+1;   // outlive any close still fading
+        el.style.pointerEvents="";
         el.style.display="flex";
         el.offsetHeight;
         el.style.opacity="1";
@@ -1681,7 +1721,7 @@ app.registerExtension({
       const closeOverlayFade=(el,cb)=>{
         el.style.opacity="0";
         el.style.transform="translateY(6px)";
-        setTimeout(()=>{el.style.display="none";if(cb)cb();},220);
+        _fkHideAfter(el,220,cb);
       };
 
       // ── TOP BAR ──────────────────────────────────────────────────────────
@@ -1871,6 +1911,8 @@ app.registerExtension({
       };
       settingsBtn.onclick=e=>{e.stopPropagation();_refreshExtInputUI();openOverlay(settingsOverlay);};
       settClose.onclick=()=>closeOverlayFade(settingsOverlay);
+      _fkSurface(settingsOverlay,()=>closeOverlayFade(settingsOverlay));
+      _fkSurface(helpOverlay,()=>closeOverlayFade(helpOverlay));
 
       // ── Layout toggle (classic wide-prompt ↔ tall preview) ────────────────
       const layoutBtn=mk("button",{
@@ -2976,6 +3018,9 @@ app.registerExtension({
         _sketchOv.style.opacity="0";
         setTimeout(()=>{
           _sketchOv.style.display="none";
+          // After display:none, never before - the check asks whether any working editor is
+          // still open, and this one would otherwise still count itself.
+          _fkReleaseChrome();
           // Return focus to canvas so node shortcuts work again
           if(document.activeElement&&_sketchOv.contains(document.activeElement)){
             document.activeElement.blur();
@@ -4930,6 +4975,10 @@ app.registerExtension({
 
       // ── Open sketch ───────────────────────────────────────────────────────
       const _openSketch=()=>{
+        // Same treatment as the image editor: a working editor holding unsaved strokes is
+        // not auto-closed, it blocks instead. Measured: this overlay does cover the top bar,
+        // so the guard is belt-and-braces here rather than the only thing stopping a click.
+        _canvasSetBoardChromeInert(true);
         _sketchOv.style.display="flex";
         _sketchOv.getBoundingClientRect();
         _sketchOv.style.opacity="1";
@@ -6034,6 +6083,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       };
 
       const _openMaskOv=(imgName,mode)=>{
+        // A working editor, like sketch and the image editor: it holds an unsaved mask, so it
+        // blocks the surface buttons rather than being auto-closed by them.
+        _canvasSetBoardChromeInert(true);
         // Re-sync inpaint sliders from state — covers values changed outside the editor
         // (e.g. restored from a gallery image's metadata via "Load settings into UI").
         _inpFeatherSlider.value=String(Math.max(0,Math.min(64,+S.inpFeather||0))); _inpFeatherFmt();
@@ -6076,7 +6128,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _closeMaskOv=()=>{
         _maskOv.style.opacity="0";
-        setTimeout(()=>_maskOv.style.display="none",160);
+        setTimeout(()=>{ _maskOv.style.display="none"; _fkReleaseChrome(); },160);
         _maskSourceImgEl=null;
       };
 
@@ -9575,10 +9627,13 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         tx(closeBtn,"✕");
         head.append(titleEl,closeBtn);
         panel.appendChild(head);
-        // One panel of a given kind at a time. Clicking Upscale (or Expand) twice used to
-        // stack identical panels on top of each other, so you filled in one and pressed
-        // Generate on another.
-        _canvasViewport.querySelectorAll(`[data-fk-panel="${titleText}"]`).forEach(el=>el.remove());
+        // One panel at a time, not one of each kind. Clicking Upscale twice used to stack
+        // identical panels so you filled in one and pressed Generate on another; the same
+        // was true across kinds, because every panel spawns at the same anchor
+        // (frame.x+frame.w+12) and Lineage, Contact sheet and Arrange landed exactly on top
+        // of one another. No caller opens a panel from inside another panel - all ten are
+        // wired to the selection toolbar - so there is no parent to preserve.
+        _canvasViewport.querySelectorAll("[data-fk-panel]").forEach(el=>el.remove());
         panel.dataset.fkPanel=titleText;
         // Same reason: a panel is chrome sitting on the board, not board content.
         // Unmarked, its factor buttons and Generate were swallowed by pointer capture.
@@ -11581,6 +11636,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           flexDirection:"column",padding:"14px",boxSizing:"border-box",zIndex:"60",
           borderRadius:"8px",opacity:"0",transition:"opacity .22s ease, transform .22s ease",
           transform:"translateY(6px)"});
+        // Built lazily, so it registers here rather than beside the eagerly-created ones.
+        // It already opens through openOverlay; without this, another surface opening on
+        // top of it would leave it live underneath.
+        _fkSurface(_svgOv,()=>closeOverlayFade(_svgOv));
         const head=mk("div",{display:"flex",alignItems:"center",gap:"8px",flexShrink:"0"});
         const ttl=mk("div",{fontSize:"12px",fontWeight:"700",color:LIME,letterSpacing:".02em"});
         tx(ttl,"Export SVG");
@@ -12456,7 +12515,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       _launcher.dataset.fkOverlay="1";
       const _canvasCloseLauncher=()=>{ _launcher.style.display="none"; };
+      _fkSurface(_launcher,_canvasCloseLauncher);
       const _canvasOpenLauncher=async()=>{
+        _fkCloseOtherSurfaces(_launcher);
         _launcher.style.display="flex";
         _lchCloseBtn.style.display=_canvasProjectId?"block":"none";
         _lchGrid.innerHTML="";
@@ -13813,6 +13874,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         // is explicitly disabled - including the delete button, aimed at the very frame being
         // edited. Made inert rather than hidden so nothing reflows underneath.
         _canvasSetBoardChromeInert(true);
+        _fkCloseOtherSurfaces(_edOverlay);
         _edOverlay.style.display="flex";
         _edOpen=true;
         requestAnimationFrame(()=>_edFit());
@@ -13820,14 +13882,21 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _canvasCloseEditor=()=>{
         _edOpen=false;
         _edXform.style.display="none"; _edXformBBox=null; _edXformDrag=null;
-        _canvasSetBoardChromeInert(false);
         _edOverlay.style.display="none";
+        // Released after display:none so the "is a working editor still open" check does not
+        // see this one; and released conditionally, in case sketch or mask is also up.
+        _fkReleaseChrome();
         _edLayers.forEach(L=>{ L.canvas.style.filter=""; L.canvas.remove(); });
         _edLayers=[]; _edFrame=null; _edUndo=[]; _edRedo=[];
         _edSelPath=null; _edLassoPts=null; _edSelMask=null;
         try{ _edClearScratch(); _edSelCv.getContext("2d").clearRect(0,0,_edW,_edH); }catch(_){}
         _edClearMask();
       };
+      // Deliberately NOT registered as a closeable surface. Cancel asks "Discard edits" when
+      // _edUndo is non-empty, and an automatic close would walk straight past that and throw
+      // the work away. The editor is instead made exclusive from the other side: while it is
+      // open the three buttons that open a surface are inert (see _canvasSetBoardChromeInert),
+      // so nothing can be opened underneath it in the first place.
       // Flatten, upload, and point the frame at the new file. The original stays in the
       // gallery untouched - editing produces a new image rather than overwriting history.
       const _edCommit=async()=>{
@@ -16258,11 +16327,15 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _canvasCloseCompare=()=>{
         if(_cmpOverlay){ _cmpOverlay.remove(); _cmpOverlay=null; }
       };
+      // Registered by getter: this overlay is rebuilt on every open and removed on close,
+      // so there is no stable element to register.
+      _fkSurface(()=>_cmpOverlay,_canvasCloseCompare);
 
       const _canvasOpenCompare=async(frames)=>{
         const list=(frames||[]).slice(0,4);
         if(list.length<2) return null;
         _canvasCloseCompare();
+        _fkCloseOtherSurfaces(null);
 
         const ov=mk("div",{position:"absolute",inset:"0",zIndex:"60",background:"#0d0d0d",
           display:"flex",flexDirection:"column"});
@@ -16617,7 +16690,24 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           el.style.pointerEvents=on?"none":"";
           el.style.opacity=on?"0.35":"";
         });
+        // The top bar is not board chrome, but these three open a full-screen surface, and
+        // the editor sits above all of them at z-index 280. Left live, clicking Settings
+        // while editing opened it underneath the editor: invisible, focusable, unreachable.
+        // Dimmed rather than hidden, like the toolbars above, so nothing reflows and the
+        // click is refused visibly instead of silently. Layout and fullscreen stay usable -
+        // neither opens a surface, and fullscreen is genuinely wanted mid-edit.
+        [galleryBtn,tipsBtn,settingsBtn].forEach(el=>{
+          if(!el) return;
+          el.style.pointerEvents=on?"none":"";
+          el.style.opacity=on?"0.35":"";
+        });
       };
+      // Three working editors take the chrome, and they can in principle overlap. Releasing
+      // it unconditionally on the first close would hand the buttons back while another was
+      // still open, which is the bug this guards in the first place.
+      const _fkWorkingEditorOpen=()=>
+        [_edOverlay,_sketchOv,_maskOv].some(el=>el&&el.style.display!=="none");
+      const _fkReleaseChrome=()=>{ if(!_fkWorkingEditorOpen()) _canvasSetBoardChromeInert(false); };
 
       const _canvasToolbar=mk("div",{display:"flex",alignItems:"center",gap:"6px",flexWrap:"wrap",
         background:C.bg1,border:`1px solid ${C.border}`,borderRadius:"8px",padding:"6px 8px"});
@@ -17778,8 +17868,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _closeInspire=()=>{
         _inspireOverlay.style.opacity="0";
-        setTimeout(()=>_inspireOverlay.style.display="none",160);
+        _fkHideAfter(_inspireOverlay,160);
       };
+      _fkSurface(_inspireOverlay,_closeInspire);
 
       // Header (static)
       const _inspireHdr=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between",
@@ -18433,6 +18524,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _openInspire=async()=>{
         await _loadDiscoverPrompts();
         _buildInspireBody();
+        _fkCloseOtherSurfaces(_inspireOverlay);
+        _inspireOverlay._fkGen=(_inspireOverlay._fkGen||0)+1;
+        _inspireOverlay.style.pointerEvents="";
         _inspireOverlay.style.display="flex";
         _inspireOverlay.getBoundingClientRect();
         _inspireOverlay.style.opacity="1";
@@ -18552,6 +18646,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       _promptOvTA.onblur=()=>_promptOvTA.style.borderColor=C.border;
       _promptOvTA.oninput=()=>{S.prompt=_promptOvTA.value;S[_pillPromptKey(activePill)]=_promptOvTA.value;promptTA.value=_promptOvTA.value;persist();};
       const _openPromptOverlay=()=>{
+        _fkCloseOtherSurfaces(_promptOverlay);
+        _promptOverlay._fkGen=(_promptOverlay._fkGen||0)+1;
+        _promptOverlay.style.pointerEvents="";
         _promptOvTA.value=S.prompt;_promptOverlay.style.display="flex";
         _promptOverlay.getBoundingClientRect();_promptOverlay.style.opacity="1";
         setTimeout(()=>{_promptOvTA.focus();_promptOvTA.setSelectionRange(_promptOvTA.value.length,_promptOvTA.value.length);},50);
@@ -18559,8 +18656,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _closePromptOverlay=()=>{
         S.prompt=_promptOvTA.value;promptTA.value=_promptOvTA.value;persist();
         _promptOverlay.style.opacity="0";
-        setTimeout(()=>_promptOverlay.style.display="none",160);
+        _fkHideAfter(_promptOverlay,160);
       };
+      // The registered closer is _closePromptOverlay, not a bare hide: it persists the text.
+      _fkSurface(_promptOverlay,()=>_closePromptOverlay());
       _promptExpandBtn.onclick=_openPromptOverlay;
       _promptCollapseBtn.onclick=_closePromptOverlay;
       _promptOverlay.append(_promptOvHdr,_promptOvTA);
@@ -21050,7 +21149,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       galMoreBtn.onclick=()=>galLoad(false,GAL_MORE); // kept for compatibility
       galRefreshBtn.onclick=()=>galLoad(true);
-      galClose.onclick=()=>closeOverlayFade(galleryOverlay,()=>{ lightbox.style.display="none"; _lbActiveImg=null; });
+      const _closeGallery=()=>closeOverlayFade(galleryOverlay,()=>{ lightbox.style.display="none"; _lbActiveImg=null; });
+      galClose.onclick=_closeGallery;
+      // Registered here rather than beside the others so the lightbox teardown is in scope.
+      _fkSurface(galleryOverlay,_closeGallery);
       galleryBtn.onclick=e=>{
         e.stopPropagation();
         openOverlay(galleryOverlay);
