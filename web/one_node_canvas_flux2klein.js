@@ -11292,7 +11292,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
         // Mode chips
         const modeRow=mk("div",{display:"flex",gap:"3px",flexWrap:"wrap"});
-        const modes=[["render","Render"],["variations","Variations"],["views","New Views"],["modify","Modify"]];
+        // Kept in step with _CANVAS_PANEL_MODES: a mode the Actions panel offers and the
+        // block does not is a mode nobody finds. Render sketch was exactly that until now.
+        const modes=[["render","Render"],["variations","Variations"],["views","New Views"],
+                     ["modify","Modify"],["sketch","Render sketch"]];
         const modeBtns={};
         modes.forEach(([k,lbl])=>{
           const mb=mk("button",{flex:"1",padding:"4px 2px",fontSize:"8px",fontWeight:"700",borderRadius:"5px",
@@ -11304,7 +11307,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
         // Shared rows. The block IS a panel context - same field names - so it drives the
         // same builders the Actions panel uses. Only genuinely block-specific chrome (the
-        // 4-mode row, quick verbs, restage warning, source label) is still built here.
+        // mode row, quick verbs, restage warning, source label) is still built here.
         const _rows=_canvasBuildPanelRows(b,
           ()=>{ syncMode(); _canvasPersistBlocksDebounced(); },
           ()=>{ _syncRestageHint(); _canvasPersistBlocksDebounced(); });
