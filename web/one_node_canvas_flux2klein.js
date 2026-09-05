@@ -11133,7 +11133,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         let promptText=[subject,ps&&ps.t].filter(Boolean).join(", ");
         b.negExtra=ps?ps.neg:"";
         if(!sources.length&&!promptText){ _canvasShowError("Type a prompt, or connect this block to an image."); return; }
-        if((b.mode==="views"||b.mode==="modify")&&!sources.length){
+        if((b.mode==="views"||b.mode==="modify"||b.mode==="sketch")&&!sources.length){
           _canvasShowError(b.mode==="views"?"New Views needs a source image — select a frame and press New Views.":"Modify needs a source image.");
           return;
         }
@@ -11181,6 +11181,25 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               graphs=await Promise.all(sel.map(v=>_canvasBuildEdit(filename,
                 `${v.p}${promptText?", "+promptText:""}, consistent product design, same object, same colours and materials, clean studio background`,1,b.negExtra,_refName)));
               namePrefix="view";
+            } else if(b.mode==="sketch"){
+              // The same builder Modify uses. i2i was measured on line art and cannot do this:
+              // it holds the drawing's tonal structure and returns a shaded line drawing at
+              // every influence. The edit path conditions on the drawing instead of blending
+              // with it, which is what "render this" actually means.
+              count=Math.max(1,Math.min(8,b.count||_canvasModeCount("sketch")));
+              const look=promptText||"a finished product render";
+              graphs=[await _canvasBuildEdit(filename,
+                look+", photorealistic finished render of this exact design, same shape, "
+                +"proportions and details as the drawing, realistic materials and lighting, "
+                +"clean studio background",
+                count,
+                // Named in the negative because the drawing itself is the strongest thing in
+                // the conditioning, and without this the render keeps its outlines.
+                ((b.negExtra?b.negExtra+", ":"")
+                  +"line art, line drawing, sketch, outline, wireframe, technical drawing, "
+                  +"blueprint, flat shading, unpainted, monochrome"),
+                _refName)];
+              namePrefix="sketch";
             } else if(b.mode==="modify"){
               count=Math.max(1,Math.min(8,b.count||_canvasModeCount("modify")));
               graphs=[await _canvasBuildEdit(filename,promptText,count,b.negExtra,_refName)];
@@ -15478,6 +15497,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
          hint:"The same subject from other camera angles."},
         {k:"modify",    label:"Modify",     dispatch:"block", min:1, max:99,
          hint:"Change something by instruction. This is the one that repaints materials."},
+        {k:"sketch",    label:"Render sketch", dispatch:"block", min:1, max:99,
+         hint:"Turn a line drawing or sketch into a finished render, holding its design."},
         {k:"refine",    label:"Refine",     dispatch:"tool",  min:1, max:1,
          hint:"Finishing pass at the same size — not an upscale.",
          run:(ctx)=>_canvasStartRefine(ctx.frames[0])},
@@ -15627,7 +15648,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             visible:()=>true,
             sync:()=>{
               if(el.value!==ctx.prompt) el.value=ctx.prompt||"";
-              el.placeholder=ctx.mode==="modify"?"Describe the change…"
+              el.placeholder=ctx.mode==="sketch"?"Optional \u2014 materials, colour, setting…"
+                :ctx.mode==="modify"?"Describe the change…"
                 :ctx.mode==="views"?"Optional extra detail…":"Describe what you want…";
             }});
           _promptEl=el;
