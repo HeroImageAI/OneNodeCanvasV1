@@ -12016,8 +12016,11 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           });
 
           // Groups carry no geometry, so restoring them is just restoring membership.
-          (_canvasGroups||[]).forEach(g=>{ if(g._el){ g._el.remove(); g._el=null; } });
-          _canvasGroups=(snap.groups||[]).map(sg=>({id:sg.id,name:sg.name||"",
+          (_canvasGroups||[]).forEach(g=>{
+            if(g._el){ g._el.remove(); g._el=null; }
+            if(g._secEl){ g._secEl.remove(); g._secEl=null; }
+          });
+          _canvasGroups=(snap.groups||[]).map(sg=>({id:sg.id,name:sg.name||"",section:!!sg.section,
             tag:sg.tag||"",frameIds:(sg.frameIds||[]).slice(),collapsed:!!sg.collapsed}));
           _canvasFrames.forEach(f=>{ if(f._el) f._el.style.display="block"; });
           _canvasRenderGroups();
@@ -12223,7 +12226,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       // Tear the board down without touching the file it came from.
       const _canvasClearBoard=()=>{
-        (_canvasGroups||[]).forEach(g=>{ if(g._el){ g._el.remove(); g._el=null; } });
+        (_canvasGroups||[]).forEach(g=>{
+          if(g._el){ g._el.remove(); g._el=null; }
+          if(g._secEl){ g._secEl.remove(); g._secEl=null; }
+        });
         _canvasGroups=[]; _canvasNextGroupId=1;
         // An un-dismissed generate-box is not board data, so nothing here used to remove it -
         // and because its outline and panel hang off the world and viewport layers rather
@@ -12275,7 +12281,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             _canvasNextBlockId=Math.max(_canvasNextBlockId,(sb.id||0)+1);
           });
           (board.canvasGroups||[]).forEach(sg=>{
-            const g={id:sg.id,name:sg.name||"",tag:sg.tag||"",
+            const g={id:sg.id,name:sg.name||"",tag:sg.tag||"",section:!!sg.section,
               frameIds:(sg.frameIds||[]).slice(),collapsed:!!sg.collapsed};
             _canvasGroups.push(g);
             _canvasNextGroupId=Math.max(_canvasNextGroupId,(sg.id||0)+1);
@@ -16232,8 +16238,22 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           w:Math.max(...fs.map(f=>f.x+f.w))-x,
           h:Math.max(...fs.map(f=>f.y+f.h))-y};
       };
-      const _canvasSerializeGroup=(g)=>({id:g.id,name:g.name||"",tag:g.tag||"",
-        frameIds:(g.frameIds||[]).slice(),collapsed:!!g.collapsed});
+      // The band takes the group's existing tag colour rather than introducing a second
+      // one. Untagged sections get a neutral slate so the band is still legible - a section
+      // should never be invisible just because nobody picked a colour.
+      const _CANVAS_SECTION_FALLBACK="#5a6470";
+      const _canvasSectionHex=(g)=>{
+        if(!g||!g.section) return null;
+        return g.tag||_CANVAS_SECTION_FALLBACK;
+      };
+      // section is written only when true, so a group that is not one serialises exactly as
+      // it did before this existed - which is every group in every saved project.
+      const _canvasSerializeGroup=(g)=>{
+        const o={id:g.id,name:g.name||"",tag:g.tag||"",
+          frameIds:(g.frameIds||[]).slice(),collapsed:!!g.collapsed};
+        if(g.section) o.section=true;
+        return o;
+      };
 
       // Every frame that must travel with this one: its own group's members, if any.
       const _canvasTravelWith=(frame)=>{
@@ -16243,11 +16263,45 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _canvasRemoveGroup=(g)=>{
         if(g._el){ g._el.remove(); g._el=null; }
+        if(g._secEl){ g._secEl.remove(); g._secEl=null; }
         _canvasGroups=_canvasGroups.filter(x=>x!==g);
       };
 
       // The collapsed stand-in. Rebuilt rather than mutated, because a group's box changes
       // whenever a member moves and there is no state worth preserving on it.
+      // The visible half of a section: a tinted band behind the frames with the name on it.
+      // zIndex 0 puts it under every frame, block and note, so it can never take a click that
+      // was meant for the work sitting on top of it - and pointerEvents:none makes that
+      // certain rather than probable.
+      const _canvasRenderSection=(g)=>{
+        const hex=_canvasSectionHex(g);
+        if(!hex){ if(g._secEl){ g._secEl.remove(); g._secEl=null; } return; }
+        const bb=_canvasGroupBBox(g);
+        if(!bb){ if(g._secEl){ g._secEl.remove(); g._secEl=null; } return; }
+        const PAD=26, HEAD=30;
+        if(!g._secEl){
+          const el=mk("div",{position:"absolute",borderRadius:"14px",zIndex:"0",
+            pointerEvents:"none",boxSizing:"border-box"});
+          const lab=mk("div",{position:"absolute",left:"14px",fontSize:"13px",fontWeight:"700",
+            letterSpacing:".04em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",
+            maxWidth:"70%"});
+          el.appendChild(lab);
+          g._secEl=el; g._secLabEl=lab;
+          _canvasWorld.appendChild(el);
+        }
+        const el=g._secEl;
+        el.style.left=(bb.x-PAD)+"px";
+        el.style.top=(bb.y-PAD-HEAD)+"px";
+        el.style.width=(bb.w+PAD*2)+"px";
+        el.style.height=(bb.h+PAD*2+HEAD)+"px";
+        el.style.border="1.5px solid "+hex;
+        // Tint from the same hex rather than a second colour, so the band and its outline
+        // always read as one object.
+        el.style.background=hex+"1f";
+        g._secLabEl.style.top=(HEAD-22)+"px";
+        g._secLabEl.style.color=hex;
+        tx(g._secLabEl,g.name||"Section");
+      };
       const _canvasRenderGroups=()=>{
         (_canvasGroups||[]).forEach(g=>{
           const fs=_canvasGroupFrames(g);
@@ -16256,8 +16310,12 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           fs.forEach(f=>{ if(f._el) f._el.style.display=g.collapsed?"none":"block"; });
           if(!g.collapsed){
             if(g._el){ g._el.remove(); g._el=null; }
+            _canvasRenderSection(g);
             return;
           }
+          // A collapsed group shows its tile instead; the section band would sit under it
+          // saying the same thing twice.
+          if(g._secEl){ g._secEl.remove(); g._secEl=null; }
           const bb=_canvasGroupBBox(g);
           if(!g._el){
             const el=mk("div",{position:"absolute",borderRadius:"10px",
@@ -16370,6 +16428,33 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         g.tag=tag||"";
         _canvasRenderGroups();
         _canvasPersistFramesDebounced();
+      };
+
+      // A section is a group you can see. Off by default, so a group behaves exactly as it
+      // always has until someone asks for the band.
+      const _canvasToggleSection=(g)=>{
+        _canvasMarkScene();
+        g.section=!g.section;
+        _canvasRenderGroups();
+        _canvasPersistFramesDebounced();
+        return g.section;
+      };
+      const _canvasMkSectionBtn=(g)=>{
+        const b=mk("button",{padding:"3px 7px",fontSize:"8px",fontWeight:"700",
+          borderRadius:"4px",border:`1px solid ${C.border}`,background:C.bg2,
+          color:C.text,cursor:"pointer",whiteSpace:"nowrap"});
+        const sync=()=>{
+          const on=!!g.section;
+          tx(b,on?"\u25a3 Section":"\u25a2 Section");
+          b.style.background=on?(g.tag||_CANVAS_SECTION_FALLBACK):C.bg2;
+          b.style.color=on?"#fff":C.text;
+          b.style.borderColor=on?(g.tag||_CANVAS_SECTION_FALLBACK):C.border;
+          b.title=on?"Showing as a labelled region on the board. Click to hide the band."
+                    :"Show this group as a labelled, tinted region on the board.";
+        };
+        b.onclick=()=>{ _canvasToggleSection(g); sync(); };
+        sync();
+        return b;
       };
 
       // Same six presets the frames use, applied to the group rather than its members.
@@ -16895,6 +16980,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             selGroupNameBtn.onclick=()=>_canvasRenameGroup(oneGroup);
             tx(selCollapseBtn,oneGroup.collapsed?"\u25a1 Expand":"\u25a1 Collapse");
             _canvasSelToolbar.append(_canvasMkGroupTagStrip(oneGroup),
+              _canvasMkSectionBtn(oneGroup),
               selGroupNameBtn,selCollapseBtn,selUngroupBtn);
           }else{
             selGroupBtn.onclick=()=>_canvasCreateGroup(frames);
@@ -16926,6 +17012,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             selGroupNameBtn.onclick=()=>_canvasRenameGroup(one2);
             tx(selCollapseBtn,one2.collapsed?"□ Expand":"□ Collapse");
             _canvasSelToolbar.append(_canvasMkGroupTagStrip(one2),
+              _canvasMkSectionBtn(one2),
               selGroupNameBtn,selCollapseBtn,selUngroupBtn);
           }else{
             selGroupBtn.onclick=()=>_canvasCreateGroup(frames);
