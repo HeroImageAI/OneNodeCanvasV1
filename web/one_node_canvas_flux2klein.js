@@ -13740,6 +13740,68 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // Runs subject detection on the flattened easel and loads the result as the
       // selection. The composite, not the active layer: you point at what you can see.
       let _edAutoBusy=false;
+      // Points accumulate so shift-click can add a second region to the same selection -
+      // SAM takes all positive points at once and returns one mask covering them, which is a
+      // better answer than segmenting twice and merging.
+      let _edSamPts=[];
+      const _edBuildSamGraph=async(srcName,pts)=>{
+        const wfR=await api.fetchApi("/flux_klein_canvas/workflow_sam_point");
+        if(!wfR.ok) throw new Error(`Could not load workflow_sam_point (HTTP ${wfR.status}).`);
+        const prompt=JSON.parse(JSON.stringify(await wfR.json()));
+        const set=(id,k,v)=>{ if(prompt[id]) prompt[id].inputs[k]=v; };
+        set("SAM:img","image",srcName);
+        // The node json.loads this string, so it has to be JSON and the coordinates have to be
+        // in image pixels - the same space the mask comes back in.
+        set("SAM:seg","coordinates_positive",
+            JSON.stringify(pts.map(q=>({x:Math.round(q.x),y:Math.round(q.y)}))));
+        set("SAM:save","filename_prefix","one-node-flux2klein-canvas/SAMMASK");
+        return prompt;
+      };
+      // Click a point, get the region under it as a selection mask.
+      const _edSamSelect=async(x,y,add)=>{
+        if(_edAutoBusy||_edGenBusy||_canvasBusy()) return;
+        _edSamPts=add?_edSamPts.concat([{x,y}]):[{x,y}];
+        _edAutoBusy=true;
+        try{
+          const cv=_edFlatten();
+          const srcName=await _canvasUploadCanvas(cv,`canvas_sam_${Date.now()}.png`);
+          const prompt=await _edBuildSamGraph(srcName,_edSamPts);
+          const im=await new Promise((resolve)=>{
+            _canvasRun({
+              prompt, count:1, busyFrames:[],
+              label:_edSamPts.length>1?"Adding to selection\u2026":"Selecting part\u2026",
+              meta:{mode:"sam-point"},
+              onFail:()=>resolve(null),
+              onResults:async(results)=>{
+                if(!results.length){ resolve(null); return; }
+                const r0={filename:results[0].filename,subfolder:results[0].subfolder||"",type:"output"};
+                const img=new Image(); img.crossOrigin="anonymous";
+                await new Promise(r=>{ img.onload=r; img.onerror=r; img.src=_canvasFileUrl(r0)+"&t="+Date.now(); });
+                resolve(img.naturalWidth?img:null);
+              },
+            });
+          });
+          if(!im){ _canvasShowError("Could not read that part. Try clicking nearer its centre."); return; }
+          // MaskToImage returns white-on-black; the selection layer reads alpha, so the
+          // luminance becomes the alpha channel here.
+          const out=document.createElement("canvas");
+          out.width=cv.width; out.height=cv.height;
+          const oc=out.getContext("2d");
+          oc.drawImage(im,0,0,out.width,out.height);
+          const d=oc.getImageData(0,0,out.width,out.height);
+          for(let i=0;i<d.data.length;i+=4){
+            const on=d.data[i]>127?255:0;
+            d.data[i]=255; d.data[i+1]=255; d.data[i+2]=255; d.data[i+3]=on;
+          }
+          oc.putImageData(d,0,0);
+          // One representation at a time, the same rule the other selection paths follow.
+          _edSelPath=null; _edLassoPts=null;
+          _edSelMask=out;
+          _edDrawSel(); _edSyncSelBtn();
+        }catch(e){ _canvasShowError(fmtErr(e)); }
+        finally{ _edAutoBusy=false; _edSyncSelModeBtn(); }
+      };
+
       const _edAutoSelect=async()=>{
         if(_edAutoBusy||_edGenBusy||_canvasBusy()) return;
         _edAutoBusy=true;
@@ -13759,6 +13821,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _edClearSelection=()=>{
         _edSelPath=null; _edLassoPts=null; _edSelMask=null;
+        // Otherwise the next shift-click would add to points from a selection that is gone.
+        _edSamPts=[];
         _edDrawSel(); _edSyncSelBtn();
       };
 
@@ -13800,6 +13864,12 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           if(_edSelMode==="auto"){
             // One click on the artwork detects the subject. No drag state to start.
             _edAutoSelect();
+            return;
+          }
+          if(_edSelMode==="part"){
+            // The click position IS the prompt here, which is the whole difference from
+            // Auto select. Shift adds a second region rather than starting over.
+            _edSamSelect(pt.x,pt.y,e.shiftKey);
             return;
           }
           if(_edSelMode==="bezier"){
@@ -14103,6 +14173,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         {k:"auto",   icon:"\u2726", label:"Auto select",
          hint:"Auto select \u2014 click the artwork to detect and select the subject. "+
               "Q cycles selection mode."},
+        {k:"part",   icon:"\u25ce", label:"Pick part",
+         hint:"Pick part \u2014 click any part of the image and just that part is selected. "+
+              "Shift-click to add another. Q cycles selection mode."},
       ];
       const _edSelModeDef=()=>_ED_SEL_MODES.find(m=>m.k===_edSelMode)||_ED_SEL_MODES[0];
       // Declared here and assigned once the strip exists, so the rail slot, the Q key and

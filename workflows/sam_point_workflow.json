@@ -1,0 +1,49 @@
+{
+  "SAM:img": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER.png",
+      "upload": "image"
+    }
+  },
+  "SAM:model": {
+    "class_type": "DownloadAndLoadSAM2Model",
+    "inputs": {
+      "model": "sam2.1_hiera_small.safetensors",
+      "segmentor": "single_image",
+      "device": "cuda",
+      "precision": "fp16"
+    }
+  },
+  "SAM:seg": {
+    "class_type": "Sam2Segmentation",
+    "inputs": {
+      "sam2_model": ["SAM:model", 0],
+      "image": ["SAM:img", 0],
+      "keep_model_loaded": true,
+      "coordinates_positive": "[{\"x\": 0, \"y\": 0}]",
+      "individual_objects": false
+    }
+  },
+  "SAM:grow": {
+    "class_type": "GrowMask",
+    "inputs": {
+      "mask": ["SAM:seg", 0],
+      "expand": 0,
+      "tapered_corners": true
+    }
+  },
+  "SAM:m2i": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": ["SAM:grow", 0]
+    }
+  },
+  "SAM:save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["SAM:m2i", 0],
+      "filename_prefix": "one-node-flux2klein-canvas/SAMMASK"
+    }
+  }
+}

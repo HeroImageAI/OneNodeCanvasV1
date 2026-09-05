@@ -498,6 +498,9 @@ PromptServer.instance.routes.get("/flux_klein_canvas/workflow_faceswap")(_serve_
 PromptServer.instance.routes.get("/flux_klein_canvas/workflow_pose")(_serve_json("workflows/pose_workflow.json"))
 PromptServer.instance.routes.get("/flux_klein_canvas/workflow_upscale")(_serve_json("workflows/upscale_workflow.json"))
 PromptServer.instance.routes.get("/flux_klein_canvas/workflow_remove_bg")(_serve_json("workflows/remove_bg_workflow.json"))
+# Point-prompted SAM2, for picking one part of an image rather than the whole subject.
+# Served the same way as every other template: the frontend patches it by node id.
+PromptServer.instance.routes.get("/flux_klein_canvas/workflow_sam_point")(_serve_json("workflows/sam_point_workflow.json"))
 
 
 @PromptServer.instance.routes.get("/flux_klein_canvas/bgremoval_models")
