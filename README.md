@@ -39,6 +39,11 @@ consistent product and materials across all of them.
 **Modify** — change something by instruction. The one that repaints materials and colours while
 holding the silhouette.
 
+**Render sketch** — turn a line drawing into a finished render, holding its design. The prompt is
+optional here: the drawing already says what to make, so you only add materials, colour or
+setting. Image-to-image cannot do this at any strength — it holds the drawing's tonal structure
+and hands you back a shaded line drawing — so this uses the reference-conditioned path instead.
+
 **Refine** — a finishing pass at the same size. Not an upscale.
 
 **Expand** — grow the frame outwards and let the model invent the new area.
@@ -49,7 +54,25 @@ holding the silhouette.
 
 **Extract Colors** — pull a palette out of an image, edit the swatches, save it to your library.
 
+**Animate** — a short clip from a still, 2, 4 or 6 seconds, at the frame's own aspect ratio. This
+one is an export rather than a board operation: the board holds still frames, so the clip is
+saved as an mp4 beside your images with a button to open it. Needs its own model — see Models
+below.
+
 **Pose** and **Faceswap** — copy a pose, or a face, from a second image.
+
+### Suggestions
+
+An empty prompt box in front of a connected image is the most common place to stall. Press
+**✦ Suggest** and the block reads the image and offers things to type: a description of what it
+sees, and edits naming the parts it actually found — "change the wheel", not a generic verb.
+
+A suggestion is offered, never applied. The button asks, a chip fills the box, and the row
+disappears once you have written something of your own rather than offering to overwrite it.
+Results are cached per image, so asking twice costs nothing.
+
+The caption is a starting point to edit, not a statement of fact — it will occasionally name a
+brand that is not there.
 
 ### Reference images
 
@@ -69,6 +92,10 @@ ancestry and the chain back to the original source is drawn on the board.
 **Groups and tags** — collect related frames into a named group, or tag them and use search to
 select every match at once.
 
+**Sections** — turn a group into a labelled, tinted region drawn behind its frames, so a board
+that has grown to forty images still says where the concept stage ends and the marketing stage
+begins. A section takes the group's own tag colour; groups without one are unchanged.
+
 **Compare** — put two frames side by side with a wipe, to judge a change properly rather than by
 memory.
 
@@ -84,6 +111,35 @@ move and transform, with optional mirrored symmetry. Paint an inpaint mask and r
 that area, blend a layer in, or run any board action from inside it.
 
 Export the whole document as a layered **PSD**, or any single layer as PNG.
+
+#### Selecting
+
+Five ways to select, cycled with **Q**: lasso, brush, bezier, **Auto select** — one click detects
+the whole subject — and **Pick part**, which segments whatever you click. Click a wheel and you
+get the wheel, not the car. Shift-click adds a second region to the same selection.
+
+Pick part downloads its model the first time you use it, so the first click is slow and the rest
+are not.
+
+#### What the mask is for
+
+One mask, three intents, one slider:
+
+- **Replace** redraws the masked area from your description
+- **Refine** improves what is already there and holds its colours
+- **Remove** fills it in from its surroundings — no description needed, just select the thing you
+  want gone
+
+**Invert** swaps masked and unmasked, which is how you replace a background: select the subject,
+invert, describe the scene, rather than tracing around it by hand.
+
+Remove is tuned for things sitting *on* a surface — a stray logo, a hallucinated artefact. For a
+part of an object, where you want the interior invented rather than the background extended, use
+Replace with a short description.
+
+Every mask you generate with is kept in **Recent masks** under the panel. A careful mask is real
+work, and a click puts it back — including after you have closed the editor and reopened it on a
+different frame.
 
 ### SVG export
 
@@ -174,6 +230,23 @@ The UPSCALE mode uses SeedVR2, a fast and genuinely great upscaler. I picked it 
 **Upscale VAE** (place in `models/vae/`)
 - [ema_vae_fp16](https://huggingface.co/Comfy-Org/SeedVR2/blob/main/vae/ema_vae_fp16.safetensors)
 
+**Animate (LTX-Video)** — for the Animate mode
+
+Distilled, so it samples in a handful of steps rather than fifty, which is what makes iterating
+on a clip bearable. A two-second clip takes about twenty seconds on a 3090.
+
+- [ltxv-2b-0.9.8-distilled-fp8](https://huggingface.co/Lightricks/LTX-Video) (4.5 GB) → `models/checkpoints/`
+- [t5xxl_fp8_e4m3fn_scaled](https://huggingface.co/comfyanonymous/flux_text_encoders) (5.2 GB) → `models/text_encoders/`
+
+**Note on VRAM.** The video model cannot share the card with the image model on 24 GB. Animate
+frees the image model before it runs and says so in the panel — your next image render will pause
+to load it back. If you ever see `Fault failed` mid-generation, that is the weight pager running
+out of headroom; `POST /free` with `{"unload_models":true,"free_memory":true}` clears it.
+
+**Pick part and Suggest** need no download from you — SAM2 and Florence2-base fetch themselves on
+first use, about 180 MB and 230 MB. They are deliberately unloaded after each call rather than
+held resident, for the same VRAM reason.
+
 ---
 
 ---
@@ -218,6 +291,44 @@ introduction to the underlying FLUX.2 [klein] workflow, but the interface shown 
 ---
 
 ## Changelog
+
+### September 5, 2026
+
+Six additions, built around one idea: a selection should be the verb. Most of what a design tool
+does to an image is "this bit, like that", and the tools for saying *this bit* were the weakest
+part of the node.
+
+**Pick part** — point-prompted segmentation. Click any part of an image and just that part is
+selected; shift-click adds another. Auto select still detects the whole subject, unchanged.
+
+**Replace / Refine / Remove, and Invert** — one mask, three intents, one slider. Remove was
+previously impossible to express: the editor refused an empty prompt, so "select it and describe
+nothing" had no way in. Invert makes background replacement a selection of the subject rather
+than a trace around it.
+
+**Recent masks** — every mask you generate with is kept and can be put back with a click,
+including after closing and reopening the editor.
+
+**✦ Suggest** — reads the connected image and proposes prompts: a description, and edits naming
+the parts it found. Offered, never applied.
+
+**Sections** — a group drawn as a labelled, tinted region, taking the group's own tag colour.
+
+**Render sketch** — a line drawing to a finished render. Measured before it was built:
+image-to-image cannot do this at any strength, holding the drawing's tonal structure whatever the
+prompt says, while the reference-conditioned path does it properly. That meant no second base
+model and no ControlNet — the capability was already here, behind a mode named for something
+else.
+
+**Animate** — a 2, 4 or 6 second clip from a still via LTX-Video, saved as an mp4.
+
+Also fixed along the way: overlapping full-screen overlays could stack, leaving the lower one
+invisible but still live; un-dismissed generate-boxes and floating panels survived a project
+switch and drifted over the next board; and the selection toolbar did not rebuild after a group
+was created, so the group's own controls stayed out of reach until you reselected. Recently
+deleted gained per-board delete alongside Empty trash.
+
+---
 
 _Entries below this point are inherited from the upstream project and describe the original
 node._
