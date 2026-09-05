@@ -12784,6 +12784,23 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       _edWrap.appendChild(_edMaskCv);
       const _edMaskCtx=()=>_edMaskCv.getContext("2d");
       const _edClearMask=()=>{ try{ _edMaskCtx().clearRect(0,0,_edW,_edH); }catch(_){} };
+      // Invert the painted region. Only alpha decides what is masked - _edMaskToUpload reads
+      // nothing else - but the colour is sampled from a pixel the user actually painted so an
+      // inverted mask looks identical to a hand-painted one rather than changing hue on them.
+      const _edMaskInvert=()=>{
+        try{
+          const cx=_edMaskCtx(), w=_edMaskCv.width, h=_edMaskCv.height;
+          const src=cx.getImageData(0,0,w,h);
+          const d=src.data;
+          let r=255,g=64,b=64,a=140;
+          for(let i=0;i<d.length;i+=4){ if(d[i+3]>10){ r=d[i]; g=d[i+1]; b=d[i+2]; a=d[i+3]; break; } }
+          for(let i=0;i<d.length;i+=4){
+            if(d[i+3]>10){ d[i+3]=0; }
+            else { d[i]=r; d[i+1]=g; d[i+2]=b; d[i+3]=a; }
+          }
+          cx.putImageData(src,0,0);
+        }catch(e){ console.warn("[FluxKlein] mask invert:",e); }
+      };
       const _edMaskHasInk=()=>{
         try{
           const d=_edMaskCtx().getImageData(0,0,_edMaskCv.width,_edMaskCv.height).data;
@@ -14663,8 +14680,64 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         cursor:"pointer",alignSelf:"flex-start"});
       tx(_edMaskClearBtn,"Clear mask");
       _edMaskClearBtn.onclick=()=>_edClearMask();
+      // ---- what the mask is for -------------------------------------------------------
+      // One mask, three intents, one slider. The intents are presets on Keep original rather
+      // than separate code paths, so the slider stays authoritative and a hand-set value is
+      // never overruled by the mode you happen to be in.
+      let _edMaskIntent="replace";
+      const _ED_MASK_INTENTS=[
+        {k:"replace",label:"Replace",keep:0.00,
+         hint:"Redraws the masked area from your description. Everything outside it is untouched."},
+        {k:"refine",label:"Refine",keep:0.65,
+         hint:"Improves what is already there and holds its colours. A description is optional."},
+        {k:"remove",label:"Remove",keep:0.00,
+         hint:"Fills the masked area in from its surroundings. No description needed \u2014 " +
+              "select the thing you want gone."},
+      ];
+      const _edMaskIntentBtns={};
+      const _edMaskIntentRow=mk("div",{display:"flex",gap:"3px"});
+      const _edMaskIntentHint=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.45"});
+      const _edSyncMaskIntent=()=>{
+        const def=_ED_MASK_INTENTS.find(x=>x.k===_edMaskIntent)||_ED_MASK_INTENTS[0];
+        Object.entries(_edMaskIntentBtns).forEach(([k,b])=>{
+          const on=(k===_edMaskIntent);
+          b.style.background=on?LIME:C.bg2; b.style.color=on?"#111":C.text;
+          b.style.borderColor=on?LIME:C.border;
+        });
+        tx(_edMaskIntentHint,def.hint);
+        // Remove drives itself; showing a slider that does nothing would be a lie.
+        _edInpaintDenWrap.style.display=(_edMaskIntent==="remove")?"none":"";
+      };
+      _ED_MASK_INTENTS.forEach(m=>{
+        const b=mk("button",{flex:"1",padding:"4px 6px",fontSize:"8px",fontWeight:"700",
+          borderRadius:"5px",border:`1px solid ${C.border}`,background:C.bg2,color:C.text,
+          cursor:"pointer",whiteSpace:"nowrap"});
+        tx(b,m.label); b.title=m.hint;
+        b.onclick=()=>{
+          _edMaskIntent=m.k;
+          const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;
+          s.call(_edInpaintDen,String(m.keep));
+          tx(_edInpaintDenVal,m.keep.toFixed(2));
+          _edSyncMaskIntent();
+        };
+        _edMaskIntentBtns[m.k]=b; _edMaskIntentRow.appendChild(b);
+      });
+      const _edMaskInvertBtn=mk("button",{background:"transparent",color:C.muted,
+        border:`1px solid ${C.border}`,borderRadius:"5px",padding:"4px 8px",fontSize:"9px",
+        cursor:"pointer"});
+      tx(_edMaskInvertBtn,"Invert");
+      _edMaskInvertBtn.title="Swap masked and unmasked. Select the subject, invert, and the "
+        +"description applies to everything around it.";
+      _edMaskInvertBtn.onclick=()=>{
+        if(!_edMaskHasInk()){ _canvasShowError("Paint a mask first, then invert it."); return; }
+        _edMaskInvert();
+      };
+      const _edMaskBtnRow=mk("div",{display:"flex",gap:"5px"});
+      _edMaskBtnRow.append(_edMaskInvertBtn,_edMaskClearBtn);
+      _edMaskClearBtn.style.alignSelf="auto";
       const _edInpaintWrap=mk("div",{display:"none",flexDirection:"column",gap:"5px"});
-      _edInpaintWrap.append(_edInpaintDenWrap,_edMaskClearBtn);
+      _edInpaintWrap.append(_edMaskIntentRow,_edMaskIntentHint,_edInpaintDenWrap,_edMaskBtnRow);
+      _edSyncMaskIntent();
 
       // Instruction-shaped openers. These want Modify, which drives the change from the
       // prompt; the other modes treat the prompt as a description of the finished image.
@@ -14803,8 +14876,11 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             _canvasShowError("Paint over the area you want changed first \u2014 use the mask brush.");
             return;
           }
-          if(!subject){
-            _canvasShowError("Describe what should replace the masked area.");
+          // Remove supplies its own instruction and Refine works on what is already there;
+          // only Replace has nothing to go on without a description.
+          if(!subject&&_edMaskIntent==="replace"){
+            _canvasShowError("Describe what should replace the masked area \u2014 or switch to "
+              +"Remove to fill it in from its surroundings.");
             return;
           }
         }
@@ -14840,10 +14916,17 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           }else if(_edGenMode==="inpaint"){
             count=1;
             const maskName=await _edMaskToUpload();
+            // An empty prompt on this graph tends to invent something rather than close the
+            // hole, so Remove carries an explicit instruction to continue the surroundings.
+            // This is the whole of "select it and describe nothing" from the reference.
+            const REMOVE_TXT="empty background, seamless continuation of the surrounding "
+              +"surface, matching lighting and texture, nothing in this area";
+            const txt=(_edMaskIntent==="remove")?REMOVE_TXT
+                     :(subject||"the same area, cleanly rendered");
             // The slider is Keep original; the graph wants denoise, so invert here - the
             // one place that has to know, rather than in the label.
-            graphs=[await _edBuildInpaintGraph(src,maskName,subject,
-                                               1-(+_edInpaintDen.value||0))];
+            const keep=(_edMaskIntent==="remove")?0:(+_edInpaintDen.value||0);
+            graphs=[await _edBuildInpaintGraph(src,maskName,txt,1-keep)];
           }else{
             count=1;
             graphs=[await _canvasBuildI2I(src,subject,(+_edGenInf.value||60)/100,1,"")];
