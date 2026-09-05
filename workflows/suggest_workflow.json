@@ -1,0 +1,58 @@
+{
+  "FL:img": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER.png",
+      "upload": "image"
+    }
+  },
+  "FL:model": {
+    "class_type": "DownloadAndLoadFlorence2Model",
+    "inputs": {
+      "model": "microsoft/Florence-2-base",
+      "precision": "fp16"
+    }
+  },
+  "FL:cap": {
+    "class_type": "Florence2Run",
+    "inputs": {
+      "image": ["FL:img", 0],
+      "florence2_model": ["FL:model", 0],
+      "text_input": "",
+      "task": "more_detailed_caption",
+      "fill_mask": false,
+      "keep_model_loaded": true,
+      "max_new_tokens": 256,
+      "num_beams": 3,
+      "do_sample": false,
+      "seed": 1
+    }
+  },
+  "FL:reg": {
+    "class_type": "Florence2Run",
+    "inputs": {
+      "image": ["FL:img", 0],
+      "florence2_model": ["FL:model", 0],
+      "text_input": "",
+      "task": "dense_region_caption",
+      "fill_mask": false,
+      "keep_model_loaded": true,
+      "max_new_tokens": 256,
+      "num_beams": 3,
+      "do_sample": false,
+      "seed": 1
+    }
+  },
+  "FL:showcap": {
+    "class_type": "ShowText|pysssss",
+    "inputs": {
+      "text": ["FL:cap", 2]
+    }
+  },
+  "FL:showreg": {
+    "class_type": "ShowText|pysssss",
+    "inputs": {
+      "text": ["FL:reg", 2]
+    }
+  }
+}

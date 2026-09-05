@@ -501,6 +501,9 @@ PromptServer.instance.routes.get("/flux_klein_canvas/workflow_remove_bg")(_serve
 # Point-prompted SAM2, for picking one part of an image rather than the whole subject.
 # Served the same way as every other template: the frontend patches it by node id.
 PromptServer.instance.routes.get("/flux_klein_canvas/workflow_sam_point")(_serve_json("workflows/sam_point_workflow.json"))
+# Florence2 captioning, for proposing prompts from the image already connected to a block.
+# The only template whose result is text rather than pictures.
+PromptServer.instance.routes.get("/flux_klein_canvas/workflow_suggest")(_serve_json("workflows/suggest_workflow.json"))
 
 
 @PromptServer.instance.routes.get("/flux_klein_canvas/bgremoval_models")

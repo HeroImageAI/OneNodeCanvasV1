@@ -15439,9 +15439,78 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // Row registry. Each entry owns its DOM and its own sync; the panel only asks whether
       // a row is visible for the current mode and which tier it belongs to. Visibility
       // mirrors the Block panel's syncMode() exactly so behaviour is identical.
+      // A run whose result is text. Deliberately NOT _canvasRun: that path snapshots the
+      // gallery, claims the dispatch refs, marks frames busy and waits for n images - all of
+      // which is right for generation and wrong for a question about an image. Nothing here
+      // touches board state, so a failed read is a returned null, not a broken run.
+      const _canvasRunText=async(prompt)=>{
+        const r=await api.fetchApi("/prompt",{method:"POST",
+          headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt})});
+        if(!r.ok) throw new Error("Could not queue the read (HTTP "+r.status+").");
+        const id=(await r.json()).prompt_id;
+        // Florence downloads itself on first use, which is a couple of minutes on a cold
+        // cache; after that this returns in a few seconds.
+        for(let i=0;i<150;i++){
+          await new Promise(s=>setTimeout(s,2000));
+          const hr=await api.fetchApi("/history/"+id);
+          if(!hr.ok) continue;
+          const h=await hr.json();
+          if(!h||!h[id]) continue;
+          const e=h[id];
+          if(e.status&&e.status.status_str==="error") throw new Error("The read failed.");
+          return e.outputs||{};
+        }
+        throw new Error("The read timed out.");
+      };
+      // Ask Florence2 what is in an image and turn the answer into things worth typing.
+      // Cached by filename: the same frame asked twice is the same answer, and the second ask
+      // would cost another model round trip for nothing.
+      const _canvasSuggestCache=new Map();
+      const _canvasSuggestFor=async(frame)=>{
+        if(!frame||!frame.filename) return null;
+        const key=frame.filename;
+        if(_canvasSuggestCache.has(key)) return _canvasSuggestCache.get(key);
+        const wfR=await api.fetchApi("/flux_klein_canvas/workflow_suggest");
+        if(!wfR.ok) throw new Error(`Could not load workflow_suggest (HTTP ${wfR.status}).`);
+        const prompt=JSON.parse(JSON.stringify(await wfR.json()));
+        // The board holds server file references, so the frame has to be copied into the
+        // input folder before LoadImage can see it - the same step every source path takes.
+        const srcName=await _canvasUploadFrame(frame);
+        if(prompt["FL:img"]) prompt["FL:img"].inputs.image=srcName;
+        const outs=await _canvasRunText(prompt);
+        const got=_canvasParseSuggest(outs);
+        _canvasSuggestCache.set(key,got);
+        return got;
+      };
+      // dense_region_caption returns "label<loc_1><loc_2>…label<loc_…>" with no separator
+      // between an entry and the next label, so the location runs are the delimiter.
+      const _canvasParseSuggest=(outs)=>{
+        const readText=(id)=>{
+          try{
+            const v=outs&&outs[id]&&outs[id].text;
+            if(Array.isArray(v)) return String(v[0]||"");
+            return v?String(v):"";
+          }catch(e){ return ""; }
+        };
+        const caption=readText("FL:showcap").trim();
+        const raw=readText("FL:showreg");
+        const parts=[];
+        raw.split(/(?:<loc_\d+>)+/).forEach(t=>{
+          const w=t.trim().toLowerCase().replace(/[^a-z0-9 \-]/g,"");
+          if(!w||w.length>28) return;
+          // The whole-object label is the picture, not a part of it - proposing "change the
+          // concept car" is just the prompt box again.
+          if(/\b(car|image|picture|photo|rendering|background)\b/.test(w)&&w.split(" ").length>2) return;
+          if(parts.indexOf(w)===-1) parts.push(w);
+        });
+        return {caption,parts:parts.slice(0,5)};
+      };
       const _canvasBuildPanelRows=(ctx,onChange,onPersist)=>{
         const persist_=()=>{ if(typeof onPersist==="function") onPersist(); };
         const rows=[];
+        // Captured when the prompt row is built, so a chip can fill the box the user is
+        // looking at rather than hunting for it in the DOM.
+        let _promptEl=null;
         const lbl=(t)=>{ const d=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap",
           minWidth:"62px"}); tx(d,t); return d; };
         // A draft context carries its frames directly; a block resolves them by id.
@@ -15477,7 +15546,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           const el=mk("textarea",{width:"100%",minHeight:"52px",resize:"vertical",fontSize:"10px",
             background:C.bg2,color:C.text,border:`1px solid ${C.border}`,borderRadius:"5px",
             padding:"5px",boxSizing:"border-box",fontFamily:"inherit"});
-          el.addEventListener("input",()=>{ ctx.prompt=el.value; persist_(); });
+          // Re-sync only when the box crosses between empty and not, never on every keystroke:
+          // the suggestions row hides itself once there is a prompt to overwrite, and without
+          // this it would not come back when the box is cleared again. Syncing per character
+          // would rebuild the panel under the cursor for no benefit.
+          let _wasEmpty=true;
+          el.addEventListener("input",()=>{
+            ctx.prompt=el.value; persist_();
+            const nowEmpty=!String(el.value||"").trim();
+            if(nowEmpty!==_wasEmpty){ _wasEmpty=nowEmpty; onChange(); }
+          });
           el.addEventListener("pointerdown",e=>e.stopPropagation());
           rows.push({id:"prompt",tier:"primary",el,
             visible:()=>true,
@@ -15486,6 +15564,68 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               el.placeholder=ctx.mode==="modify"?"Describe the change…"
                 :ctx.mode==="views"?"Optional extra detail…":"Describe what you want…";
             }});
+          _promptEl=el;
+        }
+
+        // ── Suggestions ──
+        // Offered, never applied: the button asks, the chips fill the box, and nothing here
+        // writes a prompt on its own.
+        {
+          const el=mk("div",{display:"flex",flexWrap:"wrap",gap:"4px",alignItems:"center"});
+          const ask=mk("button",{padding:"3px 7px",fontSize:"8px",fontWeight:"600",
+            borderRadius:"4px",border:`1px solid ${C.border}`,background:C.bg2,
+            color:C.muted,cursor:"pointer",whiteSpace:"nowrap"});
+          tx(ask,"\u2726 Suggest");
+          ask.title="Read the connected image and propose things to type.";
+          const chipWrap=mk("div",{display:"flex",flexWrap:"wrap",gap:"4px"});
+          const setPrompt=(t)=>{
+            ctx.prompt=t;
+            if(_promptEl){ _promptEl.value=t; }
+            persist_(); onChange();
+          };
+          const chip=(label,text,title)=>{
+            const b=mk("button",{padding:"3px 7px",fontSize:"8px",fontWeight:"500",
+              borderRadius:"4px",border:`1px solid ${C.borderH}`,background:"transparent",
+              color:C.text,cursor:"pointer",whiteSpace:"nowrap",maxWidth:"190px",
+              overflow:"hidden",textOverflow:"ellipsis"});
+            tx(b,label); b.title=title||text;
+            b.onclick=()=>setPrompt(text);
+            return b;
+          };
+          let busy=false;
+          ask.onclick=async()=>{
+            if(busy||_canvasBusy()) return;
+            const frames=Array.isArray(ctx.frames)?ctx.frames:(_canvasBlockSources(ctx)||[]);
+            const f=frames&&frames[0];
+            if(!f){ _canvasShowError("Connect an image first \u2014 suggestions come from it."); return; }
+            busy=true; ask.disabled=true; tx(ask,"Reading\u2026");
+            try{
+              const got=await _canvasSuggestFor(f);
+              chipWrap.innerHTML="";
+              if(!got||(!got.caption&&!got.parts.length)){
+                const none=mk("div",{fontSize:"8px",color:C.dim});
+                tx(none,"Nothing useful came back for this image.");
+                chipWrap.appendChild(none);
+              }else{
+                if(got.caption){
+                  // Truncated on the chip, whole thing in the prompt and the tooltip.
+                  const short=got.caption.length>46?got.caption.slice(0,46)+"\u2026":got.caption;
+                  chipWrap.appendChild(chip("\u201c"+short+"\u201d",got.caption,got.caption));
+                }
+                got.parts.forEach(w=>{
+                  chipWrap.appendChild(chip("change the "+w,"change the "+w+" to ",
+                    "Fills the prompt so you can finish the sentence."));
+                });
+              }
+            }catch(e){ _canvasShowError(fmtErr(e)); }
+            finally{ busy=false; ask.disabled=false; tx(ask,"\u2726 Suggest"); }
+          };
+          el.append(ask,chipWrap);
+          rows.push({id:"suggest",tier:"primary",el,
+            // Only with something to read, and only while the box is still empty - once you
+            // have written something, this is clutter offering to overwrite it.
+            visible:()=>hasSrc()&&!String(ctx.prompt||"").trim(),
+            sync:()=>{}});
         }
 
         // ── Keep original (denoise = 1 - influence) ──
