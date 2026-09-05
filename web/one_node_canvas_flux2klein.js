@@ -9478,6 +9478,26 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         try{ _canvasViewport.setPointerCapture(e.pointerId); }catch(_){}
       };
 
+      // Pulls a floating panel back inside the viewport by however much it overflows.
+      // Works from the rendered rect, so it does not care how the caller arrived at the
+      // position or what zoom the panel carries; the caller recomputes from scratch on every
+      // move, so the correction cannot accumulate.
+      const _canvasNudgeIntoView=(panel)=>{
+        if(!panel||!panel.isConnected) return;
+        const vp=_canvasViewport.getBoundingClientRect();
+        const r=panel.getBoundingClientRect();
+        if(!vp.width||!vp.height||!r.width||!r.height) return;
+        const z=parseFloat(panel.style.zoom||"1")||1;
+        const PAD=8;
+        let dx=0,dy=0;
+        if(r.right>vp.right-PAD) dx=(vp.right-PAD)-r.right;
+        if(r.left+dx<vp.left+PAD) dx=(vp.left+PAD)-r.left;
+        if(r.bottom>vp.bottom-PAD) dy=(vp.bottom-PAD)-r.bottom;
+        if(r.top+dy<vp.top+PAD) dy=(vp.top+PAD)-r.top;
+        if(dx) panel.style.left=((parseFloat(panel.style.left)||0)+dx/z)+"px";
+        if(dy) panel.style.top=((parseFloat(panel.style.top)||0)+dy/z)+"px";
+      };
+
       // ── Generate-box tool — drag a rectangle, then prompt + Generate ────
       const _canvasBoxDragStart=(e)=>{
         const startWorld=_canvasScreenToWorld(e.clientX,e.clientY);
@@ -9532,6 +9552,11 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         btnRow.append(genBtn,cancelBtn);
         panel.append(ta,row,btnRow);
         panel.style.zoom=String(_canvasScale());
+        // Same marker every other panel carries. Without it the viewport's pointerdown
+        // handler falls through to the marquee branch and calls setPointerCapture, which
+        // retargets the pointerup - so mousedown reached Generate and ✕ but the click
+        // event never fired, and the panel could not be dismissed at all.
+        panel.dataset.fkOverlay="1";
         _canvasViewport.appendChild(panel);
         box.panel=panel; box.promptTA=ta; box.denoiseInp=denoiseInp; box.genBtn=genBtn;
         _canvasBoxes.push(box);
@@ -9539,8 +9564,12 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           const k=_canvasHostScale();
           const sx=(box.x*_canvasCamZoom+_canvasCamX)*k, sy=((box.y+box.h)*_canvasCamZoom+_canvasCamY)*k;
           panel.style.left=Math.max(4,sx)+"px"; panel.style.top=(sy+6)+"px";
+          _canvasNudgeIntoView(panel);
         };
         box._reposition();
+        // The panel's height is not final until it has laid out, and the first measurement is
+        // of a shorter panel than the one that ends up on screen.
+        requestAnimationFrame(()=>box._reposition());
         cancelBtn.onclick=()=>_canvasRemoveBox(box);
         genBtn.onclick=()=>_canvasGenerateBox(box);
         _canvasSetTool("select");
