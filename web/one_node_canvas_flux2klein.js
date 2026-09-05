@@ -12610,7 +12610,44 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               _canvasShowError("Could not restore that board: "+fmtErr(e));
             }
           };
-          body.append(nm,meta,rb);
+          // Its own Delete, beside its own Restore. Quiet until hovered, like Empty trash -
+          // Restore is what this section is for, and the destructive twin should not catch a
+          // stray click aimed at it.
+          const db=mk("button",{background:"transparent",border:`1px solid ${C.border}`,
+            color:C.muted,borderRadius:"5px",padding:"4px 8px",fontSize:"9px",fontWeight:"700",
+            cursor:"pointer",whiteSpace:"nowrap",transition:"color .12s,border-color .12s"});
+          tx(db,"Delete");
+          db.title="Delete this board permanently. This cannot be undone.";
+          db.onmouseenter=()=>{ db.style.color="#ff6b6b"; db.style.borderColor="#ff6b6b"; };
+          db.onmouseleave=()=>{ db.style.color=C.muted; db.style.borderColor=C.border; };
+          db.onclick=async(ev)=>{
+            ev.stopPropagation();
+            // Named, not generic: Recently deleted is exactly where someone is hunting for
+            // something they did not mean to lose.
+            const ok=await _askConfirm("Permanently delete \u201c"+(it.name||"this board")+"\u201d?",
+              it.frames+" frame"+(it.frames===1?"":"s")+". This cannot be undone, and Restore "
+              +"will no longer be able to bring it back. The images themselves stay in your "
+              +"output folder.","Delete permanently");
+            if(!ok) return;
+            db.disabled=true; rb.disabled=true; tx(db,"Deleting\u2026");
+            try{
+              const r=await api.fetchApi("/flux_klein_canvas/project_trash_delete",{method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({entry:it.entry})});
+              if(!r.ok) throw new Error("HTTP "+r.status);
+            }catch(e){
+              db.disabled=false; rb.disabled=false; tx(db,"Delete");
+              _canvasShowError("Could not delete that board: "+fmtErr(e));
+              return;
+            }
+            // Re-list rather than removing the card by hand: the section hides itself when
+            // the last entry goes, and the header count has to come with it.
+            await _lchLoadTrash();
+          };
+          const actions=mk("div",{display:"flex",gap:"5px",alignSelf:"flex-start"});
+          rb.style.alignSelf="auto";
+          actions.append(rb,db);
+          body.append(nm,meta,actions);
           card.append(th,body);
           _lchTrashGrid.appendChild(card);
         });

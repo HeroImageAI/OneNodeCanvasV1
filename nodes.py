@@ -864,6 +864,34 @@ async def list_trash(request):
     return web.json_response({"trash": out})
 
 
+@PromptServer.instance.routes.post("/flux_klein_canvas/project_trash_delete")
+async def delete_trash_entry(request):
+    """Permanently delete ONE trashed board. Irreversible - the UI confirms first.
+
+    Emptying the trash was all or nothing, so removing a single board meant destroying every
+    other recoverable one with it. This takes an entry name, guarded exactly as project_restore
+    guards its own: the name must end in .json and may not contain a separator or a parent
+    reference, and the resolved path must still sit inside the trash folder.
+    """
+    try:
+        payload = await request.json()
+        entry = str(payload.get("entry") or "")
+        # Same shape check project_restore applies before it touches this folder.
+        if not entry.endswith(".json") or "/" in entry or "\\" in entry or ".." in entry:
+            return web.json_response({"ok": False, "error": "bad entry"}, status=400)
+        target = os.path.join(_trash_dir(), entry)
+        # Belt and braces: a name that passes the checks above but still resolves outside the
+        # trash - through a link, say - is refused rather than removed.
+        if os.path.realpath(os.path.dirname(target)) != os.path.realpath(_trash_dir()):
+            return web.json_response({"ok": False, "error": "bad entry"}, status=400)
+        if not os.path.isfile(target) or os.path.islink(target):
+            return web.json_response({"ok": False, "error": "not found"}, status=404)
+        os.remove(target)
+        return web.json_response({"ok": True, "removed": entry})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+
 @PromptServer.instance.routes.post("/flux_klein_canvas/project_trash_empty")
 async def empty_trash(request):
     """Permanently delete every trashed board. Irreversible - the UI confirms first.
