@@ -16565,6 +16565,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         }
         _canvasRenderGroups();
         _canvasQueueLinks();
+        // Collapsing deselects the hidden frames, which refreshes the toolbar on its way
+        // through _canvasSetSelection. Expanding changes no selection, so without this the
+        // button goes on saying "Expand" for a group that is already open.
+        _canvasUpdateSelToolbar();
         _canvasPersistFramesDebounced();
       };
 
@@ -16584,6 +16588,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           frameIds:ids,collapsed:false};
         _canvasGroups.push(g);
         _canvasRenderGroups();
+        // The selection has not changed, so nothing else will refresh the toolbar - and it is
+        // still offering "Group" for frames that are now a group.
+        _canvasUpdateSelToolbar();
         _canvasPersistFramesDebounced();
         return g;
       };
@@ -16601,6 +16608,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         _canvasMarkScene();
         g.tag=tag||"";
         _canvasRenderGroups();
+        // The Section button wears the tag colour, so it has to be rebuilt to show the change.
+        _canvasUpdateSelToolbar();
         _canvasPersistFramesDebounced();
       };
 
@@ -16650,6 +16659,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         _canvasGroupFrames(g).forEach(f=>{ if(f._el) f._el.style.display="block"; });
         _canvasRemoveGroup(g);
         _canvasQueueLinks();
+        _canvasUpdateSelToolbar();
         _canvasPersistFramesDebounced();
       };
 
