@@ -12790,6 +12790,36 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       _edWrap.appendChild(_edMaskCv);
       const _edMaskCtx=()=>_edMaskCv.getContext("2d");
       const _edClearMask=()=>{ try{ _edMaskCtx().clearRect(0,0,_edW,_edH); }catch(_){} };
+      // Masks that have been generated with, newest first. Data URLs, not canvases: a mask
+      // is a binary alpha over mostly empty space and deflates to a few KB, where the live
+      // canvas is ~7.5 MB. Module scope so they outlive closing the editor.
+      const _ED_MASK_HISTORY_MAX=8;
+      let _edMaskHistory=[];
+      const _edMaskRecord=()=>{
+        try{
+          if(!_edMaskHasInk()) return;
+          const url=_edMaskCv.toDataURL("image/png");
+          // The same mask generated with twice in a row is one entry, not two.
+          if(_edMaskHistory.length&&_edMaskHistory[0].url===url) return;
+          _edMaskHistory.unshift({url,w:_edMaskCv.width,h:_edMaskCv.height,at:Date.now()});
+          _edMaskHistory=_edMaskHistory.slice(0,_ED_MASK_HISTORY_MAX);
+          _edSyncMaskHistory();
+        }catch(e){ console.warn("[FluxKlein] mask history:",e); }
+      };
+      const _edMaskRestore=(entry)=>{
+        if(!entry) return;
+        const im=new Image();
+        im.onload=()=>{
+          try{
+            const cx=_edMaskCtx();
+            cx.clearRect(0,0,_edMaskCv.width,_edMaskCv.height);
+            // Scaled, not blitted: a mask recorded on one frame can be re-applied to another
+            // of a different size, and a 1:1 copy would land in the wrong place.
+            cx.drawImage(im,0,0,_edMaskCv.width,_edMaskCv.height);
+          }catch(e){ console.warn("[FluxKlein] mask restore:",e); }
+        };
+        im.src=entry.url;
+      };
       // Invert the painted region. Only alpha decides what is masked - _edMaskToUpload reads
       // nothing else - but the colour is sampled from a pixel the user actually painted so an
       // inverted mask looks identical to a hand-painted one rather than changing hue on them.
@@ -14814,9 +14844,36 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _edMaskBtnRow=mk("div",{display:"flex",gap:"5px"});
       _edMaskBtnRow.append(_edMaskInvertBtn,_edMaskClearBtn);
       _edMaskClearBtn.style.alignSelf="auto";
+
+      // ---- recent masks -----------------------------------------------------------------
+      // Hidden until there is something in it, so the panel is unchanged for anyone who has
+      // not generated with a mask yet.
+      const _edMaskHistWrap=mk("div",{display:"none",flexDirection:"column",gap:"4px"});
+      const _edMaskHistLbl=mk("div",{fontSize:"7px",color:C.dim,letterSpacing:".1em",
+        textTransform:"uppercase"});
+      tx(_edMaskHistLbl,"Recent masks");
+      const _edMaskHistRow=mk("div",{display:"flex",gap:"4px",flexWrap:"wrap"});
+      _edMaskHistWrap.append(_edMaskHistLbl,_edMaskHistRow);
+      const _edSyncMaskHistory=()=>{
+        _edMaskHistWrap.style.display=_edMaskHistory.length?"flex":"none";
+        _edMaskHistRow.innerHTML="";
+        _edMaskHistory.forEach((entry,i)=>{
+          const b=mk("button",{width:"38px",height:"26px",padding:"0",cursor:"pointer",
+            borderRadius:"4px",border:`1px solid ${C.border}`,background:"#111",
+            backgroundImage:`url(${entry.url})`,backgroundSize:"contain",
+            backgroundRepeat:"no-repeat",backgroundPosition:"center",flexShrink:"0"});
+          const age=Math.max(0,Math.round((Date.now()-entry.at)/1000));
+          b.title=(i===0?"Most recent mask":"Mask from "+
+            (age<90?age+"s":Math.round(age/60)+" min")+" ago")+" \u2014 click to put it back";
+          b.onclick=()=>_edMaskRestore(entry);
+          _edMaskHistRow.appendChild(b);
+        });
+      };
       const _edInpaintWrap=mk("div",{display:"none",flexDirection:"column",gap:"5px"});
-      _edInpaintWrap.append(_edMaskIntentRow,_edMaskIntentHint,_edInpaintDenWrap,_edMaskBtnRow);
+      _edInpaintWrap.append(_edMaskIntentRow,_edMaskIntentHint,_edInpaintDenWrap,_edMaskBtnRow,
+        _edMaskHistWrap);
       _edSyncMaskIntent();
+      _edSyncMaskHistory();
 
       // Instruction-shaped openers. These want Modify, which drives the change from the
       // prompt; the other modes treat the prompt as a description of the finished image.
@@ -14994,6 +15051,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               +"mismatched lighting, missing shadow")];
           }else if(_edGenMode==="inpaint"){
             count=1;
+            // Recorded here rather than on paint: a mask you abandoned is a draft, not
+            // history, and the strip is only useful if everything in it was worth keeping.
+            _edMaskRecord();
             const maskName=await _edMaskToUpload();
             // An empty prompt on this graph tends to invent something rather than close the
             // hole, so Remove carries an explicit instruction to continue the surroundings.
