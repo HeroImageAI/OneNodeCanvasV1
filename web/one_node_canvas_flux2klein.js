@@ -15511,6 +15511,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         {k:"upscale",   label:"Upscale",    dispatch:"tool",  min:1, max:1,
          hint:"SeedVR2, 2× to 8×.",
          run:(ctx)=>_canvasStartUpscale(ctx.frames[0])},
+        {k:"animate",   label:"Animate",    dispatch:"tool",  min:1, max:1,
+         hint:"A short clip from this image. Saves an mp4 \u2014 it does not land on the board.",
+         run:(ctx)=>_canvasStartAnimate(ctx.frames[0])},
         {k:"palette",   label:"Extract Colors", dispatch:"panel", min:1, max:1,
          hint:"Pull a colour palette out of this image. Edit the swatches and save them."},
         {k:"pose",      label:"Pose",       dispatch:"tool",  min:2, max:2,
@@ -16355,6 +16358,92 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // zIndex 0 puts it under every frame, block and note, so it can never take a click that
       // was meant for the work sitting on top of it - and pointerEvents:none makes that
       // certain rather than probable.
+      // Animate. An export rather than a board operation: the board holds stills, and a
+      // clip is not one.
+      const _canvasStartAnimate=async(frame)=>{
+        if(!frame) return;
+        const {panel,closeBtn}=_canvasMakePanelShell(frame.x+frame.w+12,frame.y,"Animate");
+        const note=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.5"});
+        tx(note,"The first frame is this image. The clip is saved to your output folder \u2014 "
+          +"it does not appear on the board.");
+        const ta=_canvasMkPromptTA("How should it move? e.g. the camera slowly orbits the car");
+        ta.value="";
+        const lenRow=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
+        const lenLbl=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap",minWidth:"48px"});
+        tx(lenLbl,"Length");
+        // LTX wants 8n+1 frames; these are the multiples that land on whole-ish seconds at 24fps.
+        const LENS=[{f:49,s:"2s"},{f:97,s:"4s"},{f:145,s:"6s"}];
+        let frames=97;
+        const lenBtns=LENS.map(L=>{
+          const b=mk("button",{padding:"3px 8px",fontSize:"8px",fontWeight:"700",borderRadius:"4px",
+            border:`1px solid ${C.border}`,background:C.bg2,color:C.text,cursor:"pointer"});
+          tx(b,L.s);
+          b.onclick=()=>{ frames=L.f; sync(); };
+          lenRow.appendChild(b); return {L,b};
+        });
+        const sync=()=>lenBtns.forEach(({L,b})=>{
+          const on=L.f===frames;
+          b.style.background=on?LIME:C.bg2; b.style.color=on?"#111":C.text;
+          b.style.borderColor=on?LIME:C.border;
+        });
+        lenRow.insertBefore(lenLbl,lenRow.firstChild);
+        const warn=mk("div",{fontSize:"8px",color:C.warn,lineHeight:"1.5"});
+        tx(warn,"The video model cannot share the card with the image model, so this unloads "
+          +"it first. Your next render will pause to load it back.");
+        const go=mk("button",{background:LIME,color:"#111",border:"none",borderRadius:"5px",
+          padding:"7px",fontSize:"10px",fontWeight:"700",cursor:"pointer"});
+        tx(go,"Animate");
+        const status=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5",display:"none"});
+        panel.append(note,ta,lenRow,warn,go,status);
+        sync();
+        closeBtn.onclick=()=>panel.remove();
+
+        go.onclick=async()=>{
+          if(_canvasBusy()) return;
+          go.disabled=true; tx(go,"Animating\u2026");
+          status.style.display="block"; tx(status,"Freeing the image model\u2026");
+          try{
+            // Deliberate and first: two base models will not fit, and the failure mode is a
+            // pager fault mid-run rather than a clean out-of-memory.
+            try{
+              await api.fetchApi("/free",{method:"POST",headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({unload_models:true,free_memory:true})});
+            }catch(e){ console.warn("[FluxKlein] pre-animate free:",e); }
+            const wfR=await api.fetchApi("/flux_klein_canvas/workflow_animate");
+            if(!wfR.ok) throw new Error(`Could not load workflow_animate (HTTP ${wfR.status}).`);
+            const prompt=JSON.parse(JSON.stringify(await wfR.json()));
+            const srcName=await _canvasUploadFrame(frame);
+            const set=(id,k,v)=>{ if(prompt[id]) prompt[id].inputs[k]=v; };
+            set("AN:img","image",srcName);
+            set("AN:pos","text",ta.value.trim()||"the camera slowly orbits the subject, "
+              +"smooth cinematic motion");
+            set("AN:i2v","length",frames);
+            // Keep the source's shape but land on the multiples LTX wants.
+            const ar=(frame.w&&frame.h)?frame.w/frame.h:1.5;
+            const W=Math.max(256,Math.round((ar>=1?768:768*ar)/32)*32);
+            const H=Math.max(256,Math.round((ar>=1?768/ar:768)/32)*32);
+            set("AN:i2v","width",W); set("AN:i2v","height",H);
+            set("AN:noise","noise_seed",_canvasSeed());
+            tx(status,`Rendering ${frames} frames at ${W}\u00d7${H}\u2026 this is slower than an image.`);
+            const outs=await _canvasRunText(prompt);
+            let file=null;
+            Object.values(outs||{}).forEach(o=>{
+              ((o&&(o.images||o.videos))||[]).forEach(v=>{ if(v&&v.filename) file=v; });
+            });
+            if(!file){ tx(status,"The run finished but produced no clip."); return; }
+            tx(status,"Saved as "+file.filename+" in your output folder.");
+            const open=mk("button",{background:C.bg2,color:C.text,border:`1px solid ${C.border}`,
+              borderRadius:"5px",padding:"5px 8px",fontSize:"9px",cursor:"pointer",marginTop:"4px"});
+            tx(open,"Open clip");
+            open.onclick=()=>{ try{ window.open(_canvasFileUrl(
+              {filename:file.filename,subfolder:file.subfolder||"",type:file.type||"output"}),"_blank"); }catch(e){} };
+            panel.appendChild(open);
+            if(soundEnabled){ try{playDone();}catch(e){} }
+          }catch(err){ tx(status,fmtErr(err)); }
+          finally{ go.disabled=false; tx(go,"Animate"); }
+        };
+      };
+
       const _canvasRenderSection=(g)=>{
         const hex=_canvasSectionHex(g);
         if(!hex){ if(g._secEl){ g._secEl.remove(); g._secEl=null; } return; }

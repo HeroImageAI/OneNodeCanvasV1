@@ -504,6 +504,9 @@ PromptServer.instance.routes.get("/flux_klein_canvas/workflow_sam_point")(_serve
 # Florence2 captioning, for proposing prompts from the image already connected to a block.
 # The only template whose result is text rather than pictures.
 PromptServer.instance.routes.get("/flux_klein_canvas/workflow_suggest")(_serve_json("workflows/suggest_workflow.json"))
+# LTX-Video image-to-video. The only template whose result is a clip rather than stills, and
+# the only one whose model must not share the card with klein - see the animate panel.
+PromptServer.instance.routes.get("/flux_klein_canvas/workflow_animate")(_serve_json("workflows/animate_workflow.json"))
 
 
 @PromptServer.instance.routes.get("/flux_klein_canvas/bgremoval_models")

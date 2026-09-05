@@ -1,0 +1,123 @@
+{
+  "AN:ckpt": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltxv-2b-0.9.8-distilled-fp8.safetensors"
+    }
+  },
+  "AN:clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "ltxv"
+    }
+  },
+  "AN:img": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER.png",
+      "upload": "image"
+    }
+  },
+  "AN:pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["AN:clip", 0],
+      "text": "the camera slowly orbits the subject"
+    }
+  },
+  "AN:neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["AN:clip", 0],
+      "text": "low quality, worst quality, deformed, distorted, watermark, jitter, flicker, morphing"
+    }
+  },
+  "AN:i2v": {
+    "class_type": "LTXVImgToVideo",
+    "inputs": {
+      "positive": ["AN:pos", 0],
+      "negative": ["AN:neg", 0],
+      "vae": ["AN:ckpt", 2],
+      "image": ["AN:img", 0],
+      "width": 768,
+      "height": 512,
+      "length": 97,
+      "batch_size": 1,
+      "strength": 1.0
+    }
+  },
+  "AN:cond": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": ["AN:i2v", 0],
+      "negative": ["AN:i2v", 1],
+      "frame_rate": 24.0
+    }
+  },
+  "AN:sched": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 8,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": ["AN:i2v", 2]
+    }
+  },
+  "AN:sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "AN:guider": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["AN:ckpt", 0],
+      "positive": ["AN:cond", 0],
+      "negative": ["AN:cond", 1],
+      "cfg": 1.0
+    }
+  },
+  "AN:noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    }
+  },
+  "AN:adv": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["AN:noise", 0],
+      "guider": ["AN:guider", 0],
+      "sampler": ["AN:sampler", 0],
+      "sigmas": ["AN:sched", 0],
+      "latent_image": ["AN:i2v", 2]
+    }
+  },
+  "AN:decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["AN:adv", 0],
+      "vae": ["AN:ckpt", 2]
+    }
+  },
+  "AN:video": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": ["AN:decode", 0],
+      "fps": 24.0
+    }
+  },
+  "AN:save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["AN:video", 0],
+      "filename_prefix": "one-node-flux2klein-canvas/CLIP",
+      "format": "auto",
+      "codec": "auto"
+    }
+  }
+}
