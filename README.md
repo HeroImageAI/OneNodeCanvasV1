@@ -21,7 +21,9 @@ group, tag, rename and arrange them.
 should do, and press Generate. The results land back on the board, linked to their sources so
 you can trace where anything came from.
 
-Boards are saved as **projects** and persist across restarts.
+Boards are saved as **projects** and persist across restarts. Deleting one moves it to **Recently
+deleted**, where it can be restored for 30 days — the images themselves never leave your output
+folder.
 
 ## What it does
 
@@ -350,10 +352,10 @@ introduction to the underlying FLUX.2 [klein] workflow, but the interface shown 
 
 ### September 6, 2026
 
-Four fixes, all found by using the node to take a real creative brief from concept to a finished
-apparel collection rather than by testing the features one at a time. Three of them are the
-generate box — the quickest way into the node, and the least documented. It now has a section of
-its own above.
+Five fixes, all found by using the node for real work rather than by testing the features one at
+a time — four while taking a creative brief from concept to a finished apparel collection, and
+the fifth after a board was deleted by accident. Three are the generate box, the quickest way
+into the node and the least documented; it now has a section of its own above.
 
 **The generate box says how big the render will be.** It was the only generation path that
 didn't, and the one where the number cannot be guessed: the rectangle is measured in board
@@ -383,6 +385,18 @@ for reading with share-read and share-write but *not* share-delete — so the re
 the write, it blocked the **rename**. A failed embed is now retried on a background thread and
 lands on the next sweep. The JSON sidecar was always written and is what the gallery reads, so
 nothing was ever lost from the node's own view; this only mattered when a PNG left the project.
+
+**Deleting a board now takes aim.** Three things lined up to make it a slightly low click. The
+whole project card is Open, so the destructive control sat inside the thing you were pointing
+at; Delete looked ordinary, a plain bordered button always on show; and the confirm agreed with
+it, because its OK button was lime, bold and focused the moment the dialog opened — so the
+reflex that clicks the bright button, or just Enter, finished the job. Delete is now hidden
+until you hover the card and red only when you hover the button, matching the treatment
+Recently deleted and Empty trash always had. A destructive confirm paints OK red and starts on
+Cancel, so Enter no longer completes it. That last part is inferred from the button's own
+label, so every delete confirm in the node gained it, while *Switch anyway* and *Merge* keep
+the ordinary treatment. Nothing was lost either way — a deleted board goes to Recently deleted
+and can be restored for 30 days, which is exactly what happened.
 
 ### September 5, 2026
 
