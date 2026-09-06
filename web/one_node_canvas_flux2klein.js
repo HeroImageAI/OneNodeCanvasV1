@@ -9482,15 +9482,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // Works from the rendered rect, so it does not care how the caller arrived at the
       // position or what zoom the panel carries; the caller recomputes from scratch on every
       // move, so the correction cannot accumulate.
-      const _canvasNudgeIntoView=(panel)=>{
+      const _canvasNudgeIntoView=(panel,insetRight,pad)=>{
         if(!panel||!panel.isConnected) return;
         const vp=_canvasViewport.getBoundingClientRect();
         const r=panel.getBoundingClientRect();
         if(!vp.width||!vp.height||!r.width||!r.height) return;
         const z=parseFloat(panel.style.zoom||"1")||1;
-        const PAD=8;
+        const PAD=(pad==null)?8:pad;
+        const right=vp.right-(insetRight||0)-PAD;
         let dx=0,dy=0;
-        if(r.right>vp.right-PAD) dx=(vp.right-PAD)-r.right;
+        if(r.right>right) dx=right-r.right;
         if(r.left+dx<vp.left+PAD) dx=(vp.left+PAD)-r.left;
         if(r.bottom>vp.bottom-PAD) dy=(vp.bottom-PAD)-r.bottom;
         if(r.top+dy<vp.top+PAD) dy=(vp.top+PAD)-r.top;
@@ -9644,23 +9645,22 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       });
       // Keep the whole panel on screen and out from under the gallery rail. Measured
       // after mount because the panel carries its own chrome zoom.
+      // Keeps a panel inside the board, minus whatever the gallery rail is covering.
+      //
+      // This used to clamp panel.style.left - an unzoomed value - against a maximum measured
+      // in zoomed viewport pixels, then write back left/z. The mismatch meant every call
+      // divided the position by the zoom again, so the panel walked up and to the left a
+      // little further each time its contents changed: about 32x17 css px per row toggle on
+      // the Actions panel, in the same direction every time. Correcting by the measured
+      // overflow instead cannot accumulate - a second call finds nothing left to correct.
       const _canvasClampPanel=(panel)=>{
-        const vw=_canvasViewport.clientWidth||0, vh=_canvasViewport.clientHeight||0;
-        if(!vw||!vh) return;
-        const z=parseFloat(panel.style.zoom||"1")||1;
-        const pw=panel.offsetWidth*z, ph=panel.offsetHeight*z;
         let railW=0;
         try{
           if(_railEl&&_railEl.style.display!=="none"){
-            railW=_railEl.offsetWidth*(parseFloat(_railEl.style.zoom||"1")||1);
+            railW=_railEl.getBoundingClientRect().width;
           }
         }catch(e){}
-        const pad=10;
-        const maxX=Math.max(pad,vw-railW-pw-pad), maxY=Math.max(pad,vh-ph-pad);
-        const cx=Math.min(Math.max(pad,parseFloat(panel.style.left)||0),maxX);
-        const cy=Math.min(Math.max(pad,parseFloat(panel.style.top)||0),maxY);
-        panel.style.left=Math.round(cx/z)+"px";
-        panel.style.top=Math.round(cy/z)+"px";
+        _canvasNudgeIntoView(panel,railW,10);
       };
       const _canvasMakePanelShell=(wx,wy,titleText)=>{
         const v=_canvasWorldToView(wx,wy);
@@ -14819,6 +14819,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             })();
           }
           _edSyncGenMode();
+          // Inpaint adds the intent row and its hint, which is enough to push Generate past
+          // the bottom of the Modify panel's own scroll area. block:"nearest" moves the
+          // container only when the button is actually out of view.
+          requestAnimationFrame(()=>{ try{ _edGenGo.scrollIntoView({block:"nearest"}); }catch(_){} });
         };
         _edGenModeBtns[k]=b;
         _edGenModeRow.appendChild(b);
@@ -15637,6 +15641,14 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const srcName=await _canvasUploadFrame(frame);
         if(prompt["FL:img"]) prompt["FL:img"].inputs.image=srcName;
         const outs=await _canvasRunText(prompt);
+        // Florence is small but it stays in the cache, and klein plus a resident Florence do
+        // not fit a 24GB card with room left for the pager to work: the render after a
+        // Suggest took 370s, against 43s before it and 23s after. Animate frees the card
+        // before it runs for the same reason. The cost is one model load on the next render.
+        try{
+          await api.fetchApi("/free",{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({unload_models:true,free_memory:true})});
+        }catch(e){ console.warn("[FluxKlein] post-suggest free:",e); }
         const got=_canvasParseSuggest(outs);
         _canvasSuggestCache.set(key,got);
         return got;
