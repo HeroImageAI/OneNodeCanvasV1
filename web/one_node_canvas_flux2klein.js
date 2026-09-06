@@ -12614,6 +12614,17 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _canvasNewProjectId=()=>"p"+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
 
+      // The generate box's remembered prompt belongs to the board it was typed on. Called
+      // at each of the three points where the open board changes identity - opening another
+      // project, creating one, closing one - and nowhere else, so reopening the same project
+      // keeps it.
+      const _canvasForgetBoardPrompt=(nextId)=>{
+        if(_canvasProjectId===nextId) return;
+        if(!S.promptCanvas) return;
+        S.promptCanvas="";
+        persist();
+      };
+
       const _canvasOpenProject=async(id,name)=>{
         // A render in flight delivers to whatever board is open when it finishes, so
         // switching now quietly drops those images on the NEW board. Nothing is lost, but
@@ -12643,6 +12654,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           if(!r.ok) throw new Error("HTTP "+r.status);
           const d=await r.json();
           _committed=true;
+          // Before the id moves: the helper compares against the board being left.
+          _canvasForgetBoardPrompt(id);
           _canvasProjectId=id;
           _canvasProjectName=(d.project&&d.project.name)||name||"Untitled";
           S.canvasProjectId=_canvasProjectId; S.canvasProjectName=_canvasProjectName; persist();
@@ -12669,6 +12682,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       const _canvasCreateProject=async(name,seedBoard)=>{
         const id=_canvasNewProjectId();
+        _canvasForgetBoardPrompt(id);
         _canvasProjectId=id;
         _canvasProjectName=(name||"Untitled project").trim()||"Untitled project";
         S.canvasProjectId=id; S.canvasProjectName=_canvasProjectName; persist();
@@ -12988,6 +13002,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               if(pr.id===_canvasProjectId){
                 clearTimeout(_canvasProjectSaveTimer);
                 _canvasProjectLoaded=false;
+                _canvasForgetBoardPrompt(null);
                 _canvasProjectId=null; _canvasProjectName="";
                 S.canvasProjectId=null; S.canvasProjectName=""; persist();
                 _canvasClearBoard(); _canvasSyncProjectLabel();
