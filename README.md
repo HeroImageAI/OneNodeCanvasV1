@@ -93,6 +93,30 @@ that is already installed.
 
 **Pose** and **Faceswap** — copy a pose, or a face, from a second image.
 
+### The generate box
+
+Press **▭ Generate** and drag a rectangle anywhere on the board. Type a prompt, press Generate,
+and the result lands in that rectangle at that shape. It is the quickest way in — no frame to
+select first, no block to wire.
+
+Drag it over **empty canvas** and it generates from the prompt alone. Drag it **over existing
+frames** and it composites whatever is underneath and works from that instead, with a *Keep
+original* slider deciding how much of it survives. The panel only shows that slider when there
+is something under the box to keep, because on empty canvas it does nothing.
+
+The box reports the size it is about to make, and this is worth reading. The rectangle is
+measured in **board** units, not screen pixels, so at 6% zoom the same drag is four times wider
+and four times taller than at 25% — about seventeen times the pixels — and nothing else on
+screen tells you that. A box that looks like a modest panel on a zoomed-out board can be a
+hundred megapixels. Past 4 MP the
+panel warns that the run will be slow; past 8 MP it warns properly, because a 9.2 MP render
+sampled in 76 seconds on a 24 GB card and then never finished decoding. The fix is usually to
+zoom in and draw the same rectangle again.
+
+The prompt is remembered, so drawing a second box to try the same idea at another size does not
+mean retyping it. It is remembered per board — open a different project and the box starts
+empty rather than handing you a prompt written for something else.
+
 ### Suggestions
 
 An empty prompt box in front of a connected image is the most common place to stall. Press
@@ -323,6 +347,42 @@ introduction to the underlying FLUX.2 [klein] workflow, but the interface shown 
 ---
 
 ## Changelog
+
+### September 6, 2026
+
+Four fixes, all found by using the node to take a real creative brief from concept to a finished
+apparel collection rather than by testing the features one at a time. Three of them are the
+generate box — the quickest way into the node, and the least documented. It now has a section of
+its own above.
+
+**The generate box says how big the render will be.** It was the only generation path that
+didn't, and the one where the number cannot be guessed: the rectangle is measured in board
+units, so at 6% zoom the same drag covers about seventeen times the pixels it does at 25%. A box
+drawn on a zoomed-out board that looked like a modest panel asked for 9.2 MP; it sampled in 76
+seconds and then sat in the VAE decode, which does not answer `/interrupt`, until the server was
+restarted. The same drag on a full board asks for 119.6 MP. The panel now warns at 4 MP and,
+past 8 MP, quotes the run that actually failed and names the fix — zoom in, and the same
+rectangle asks for less.
+
+**Keep original is shown only when there is something to keep.** Over empty canvas the box runs
+text-to-image at full denoise and the slider was ignored — but it was still displayed, enabled,
+at whatever it was last set to. A control that is visible, adjustable and inert is how a render
+that came out ignoring it looks like the slider's fault. A line now says what will happen
+instead.
+
+**The generate box's prompt no longer follows you between projects.** Remembering it within a
+board is useful — drawing a second box to try the same idea at another size shouldn't mean
+retyping. Carrying it into an unrelated project is not: typing around a prefill you didn't
+notice is how artwork from one job ends up rendered into another's. Board identity is now the
+boundary, so reopening the same project still finds it where you left it.
+
+**A PNG that was busy gets its metadata a minute later instead of losing it.** Every board
+render was losing its embedded copy. The cause was more specific than "file locked": the board
+adds the new frame the moment a run finishes, the browser asks for it, and CPython opens files
+for reading with share-read and share-write but *not* share-delete — so the reader never blocked
+the write, it blocked the **rename**. A failed embed is now retried on a background thread and
+lands on the next sweep. The JSON sidecar was always written and is what the gallery reads, so
+nothing was ever lost from the node's own view; this only mattered when a PNG left the project.
 
 ### September 5, 2026
 
