@@ -9738,6 +9738,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         document.addEventListener("pointerup",up);
       };
 
+      // What the box will actually generate. Shared with _canvasGenerateBox so the panel
+      // cannot predict one size while the graph builds another. The short side is lifted to
+      // MIN_GEN_SIDE for a box drawn small, and both sides land on a multiple of 16 for the
+      // VAE - so this is the graph's arithmetic, not an estimate of it.
+      const _canvasBoxGenSize=(box)=>{
+        const k=Math.max(1,MIN_GEN_SIDE/Math.max(1,Math.min(box.w,box.h)));
+        return {w:Math.max(256,Math.round(box.w*k/16)*16),
+                h:Math.max(256,Math.round(box.h*k/16)*16)};
+      };
+
       // What the box was drawn over. The panel uses it to decide whether Keep original
       // applies; _canvasGenerateBox uses it to choose between i2i and t2i. They have to be
       // the same test, or the panel offers a setting the graph will not read.
@@ -9771,6 +9781,27 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         // but the reader still wants to know what pressing Generate will do.
         const emptyNote=mk("div",{fontSize:"8px",color:C.muted,fontStyle:"italic"});
         tx(emptyNote,"Empty area \u2014 generating from the prompt alone.");
+        // Same box and same wording as Expand and Upscale. The box is drawn in board units,
+        // so the size depends on the zoom you drew it at and there is nothing on screen that
+        // says so - which makes this the one panel where the number cannot be guessed.
+        const _gz=_canvasBoxGenSize(box);
+        const _gmp=_gz.w*_gz.h/1000000;
+        const sizeBox=mk("div",{display:"flex",flexDirection:"column",gap:"3px",
+          padding:"6px 7px",borderRadius:"5px",background:C.bg1,border:`1px solid ${C.border}`});
+        const sizeLine=mk("div",{fontSize:"10px",fontWeight:"700",color:LIME});
+        tx(sizeLine,_gz.w+" \u00d7 "+_gz.h+"   ("+_gmp.toFixed(1)+" MP)");
+        const sizeWarn=mk("div",{fontSize:"8px",color:C.warn,display:"none",lineHeight:"1.4"});
+        sizeBox.append(sizeLine,sizeWarn);
+        // Measured on a 24 GB card, this path: an ordinary 2.1 MP render takes about 40s. A
+        // 9.2 MP one sampled in 76s and then sat in the VAE decode, which does not answer
+        // /interrupt, until the server was restarted. The strong warning quotes that run
+        // rather than claiming a general limit, and names the fix - the box is in board
+        // units, so zooming in makes the same drag ask for less.
+        if(_gmp>=8){ tx(sizeWarn,"Very large \u2014 a 9.2 MP render sampled fine and then "
+          +"never finished decoding on a 24 GB card. Zoom in and draw again, or draw a "
+          +"smaller box."); sizeWarn.style.display="block"; }
+        else if(_gmp>=4){ tx(sizeWarn,"Large \u2014 expect a slow run.");
+          sizeWarn.style.display="block"; }
         const btnRow=mk("div",{display:"flex",gap:"6px"});
         const genBtn=mk("button",{flex:"1",background:LIME,color:"#111",border:"none",borderRadius:"5px",
           padding:"6px",fontSize:"10px",fontWeight:"700",cursor:"pointer"});
@@ -9779,7 +9810,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           borderRadius:"5px",padding:"6px 10px",fontSize:"10px",cursor:"pointer"});
         tx(cancelBtn,"✕");
         btnRow.append(genBtn,cancelBtn);
-        panel.append(ta,row,emptyNote,btnRow);
+        panel.append(ta,row,emptyNote,sizeBox,btnRow);
         // Re-read rather than cached: frames can be deleted, moved or added while the panel
         // sits open, and the slider must stop claiming to apply the moment it stops applying.
         const _syncKeepVis=()=>{
@@ -9826,10 +9857,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const bx0=box.x,by0=box.y;
         const overlapping=_canvasBoxOverlaps(box);
         // The box is drawn in board units and could be tiny; keep its shape but lift it
-        // to a usable generation size.
-        const boxK=Math.max(1,MIN_GEN_SIDE/Math.max(1,Math.min(box.w,box.h)));
-        const W=Math.max(256,Math.round(box.w*boxK/16)*16),
-              H=Math.max(256,Math.round(box.h*boxK/16)*16);
+        // to a usable generation size. Same helper the panel quoted, so the number the user
+        // agreed to is the number that runs.
+        const _gs=_canvasBoxGenSize(box);
+        const W=_gs.w, H=_gs.h;
 
         try{
           let graph;
