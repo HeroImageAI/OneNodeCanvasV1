@@ -12783,22 +12783,39 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         _nameResolve=res; _nameMode="name";
         tx(_nameTitle,title);
         tx(_nameOk,okLabel||"Create");
+        // Shared button: a preceding destructive confirm left it red.
+        _nameOk.style.background=LIME; _nameOk.style.color="#111";
         _nameMsg.style.display="none";
         _nameInp.style.display="";
         _nameInp.value=initial||"";
         _nameOv.style.display="flex";
         setTimeout(()=>{ try{ _nameInp.focus(); _nameInp.select(); }catch(e){} },30);
       });
+      // Whether a confirm is about to destroy something, read off its own button. Callers
+      // may say so explicitly; inferring by default means every delete confirm already in the
+      // file gets the safer treatment without being edited, and a false positive costs
+      // nothing worse than a red button and a cursor that starts on Cancel.
+      const _CONFIRM_DESTRUCTIVE=/\b(delete|remove|discard|empty|clear|erase|permanently)\b/i;
       // Same overlay, yes/no instead of a text field. Resolves true/false.
-      const _askConfirm=(title,message,okLabel)=>new Promise(res=>{
+      const _askConfirm=(title,message,okLabel,destructive)=>new Promise(res=>{
         _nameResolve=res; _nameMode="confirm";
         tx(_nameTitle,title);
         tx(_nameMsg,message||"");
         _nameMsg.style.display=message?"block":"none";
         _nameInp.style.display="none";
         tx(_nameOk,okLabel||"OK");
+        const danger=(destructive===undefined)
+          ? _CONFIRM_DESTRUCTIVE.test(String(okLabel||"")+" "+String(title||""))
+          : !!destructive;
+        // The buttons are reused across every dialog, so both branches are written out -
+        // leaving the red on would carry it into the next Create.
+        if(danger){ _nameOk.style.background="#e05555"; _nameOk.style.color="#fff"; }
+        else { _nameOk.style.background=LIME; _nameOk.style.color="#111"; }
         _nameOv.style.display="flex";
-        setTimeout(()=>{ try{ _nameOk.focus(); }catch(e){} },30);
+        // Focus Cancel, not nothing: the overlay's Escape handler only receives keys because
+        // something inside it holds focus, so focusing nothing would break Escape as well as
+        // Enter. This way Enter answers no.
+        setTimeout(()=>{ try{ (danger?_nameCancel:_nameOk).focus(); }catch(e){} },30);
       });
       // What "dismissed" means depends on the mode: no name, or no.
       const _nameDismiss=()=>_nameMode==="confirm"?false:null;
@@ -13018,9 +13035,18 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           const when=pr.updated?new Date(pr.updated*1000).toLocaleString():"";
           tx(meta,`${pr.frames} image${pr.frames===1?"":"s"} \u00b7 ${pr.blocks} block${pr.blocks===1?"":"s"}${when?" \u00b7 "+when:""}`);
           const row=mk("div",{display:"flex",gap:"6px",marginTop:"5px"});
+          // Hidden until the card is hovered, and quiet until the button itself is. The whole
+          // card is the Open target, so a Delete that is always visible and styled like
+          // everything else sits inside the thing you are aiming at - which is how a board
+          // gets deleted by a slightly low click. display:none rather than transparent: an
+          // invisible button that still takes the click is the bug, not the fix.
           const del=mk("button",{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,
-            borderRadius:"5px",padding:"3px 7px",fontSize:"8px",cursor:"pointer"});
+            borderRadius:"5px",padding:"3px 7px",fontSize:"8px",cursor:"pointer",display:"none",
+            transition:"color .12s,border-color .12s"});
           tx(del,"Delete");
+          del.title="Move this board to Recently deleted. Restorable for 30 days.";
+          del.onmouseenter=()=>{ del.style.color="#ff6b6b"; del.style.borderColor="#ff6b6b"; };
+          del.onmouseleave=()=>{ del.style.color=C.muted; del.style.borderColor=C.border; };
           del.onclick=async(ev)=>{
             ev.stopPropagation();
             if(!await _askConfirm("Delete project",
@@ -13044,8 +13070,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           row.append(del);
           body.append(nm,meta,row);
           card.append(thumbWrap,body);
-          card.onmouseenter=()=>{ if(pr.id!==_canvasProjectId) card.style.borderColor=C.borderH; };
-          card.onmouseleave=()=>{ if(pr.id!==_canvasProjectId) card.style.borderColor=C.border; };
+          card.onmouseenter=()=>{ if(pr.id!==_canvasProjectId) card.style.borderColor=C.borderH;
+            del.style.display=""; };
+          card.onmouseleave=()=>{ if(pr.id!==_canvasProjectId) card.style.borderColor=C.border;
+            del.style.display="none"; del.style.color=C.muted; del.style.borderColor=C.border; };
           card.onclick=()=>_canvasOpenProject(pr.id,pr.name);
           _lchGrid.appendChild(card);
         });
