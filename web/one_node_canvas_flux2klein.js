@@ -15392,8 +15392,40 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           amounts[key]=inp;
           cell.append(l,inp); grid.appendChild(cell);
         });
+        // What the four numbers add up to. Expand is the one panel that can quietly build a
+        // canvas too big to sample - measured: a 2720x2048 frame plus the default 256 a side
+        // sat at 0% for 328s with the card full - and it was the one panel that said nothing
+        // about size. Same box and same wording as Upscale, because the question is the same.
+        const _exSrc=frame._contentEl;
+        const _exW=(_exSrc&&(_exSrc.naturalWidth||_exSrc.width))||Math.round(frame.w);
+        const _exH=(_exSrc&&(_exSrc.naturalHeight||_exSrc.height))||Math.round(frame.h);
+        const _exBox=mk("div",{display:"flex",flexDirection:"column",gap:"3px",
+          padding:"6px 7px",borderRadius:"5px",background:C.bg1,border:`1px solid ${C.border}`});
+        const _exNow=mk("div",{fontSize:"9px",color:C.muted});
+        tx(_exNow,"Now  "+_exW+" \u00d7 "+_exH);
+        const _exAfter=mk("div",{fontSize:"10px",fontWeight:"700",color:LIME});
+        const _exWarn=mk("div",{fontSize:"8px",color:C.warn,display:"none",lineHeight:"1.4"});
+        _exBox.append(_exNow,_exAfter,_exWarn);
+        const _exSync=()=>{
+          const pd={top:+amounts.top.value||0,right:+amounts.right.value||0,
+                    bottom:+amounts.bottom.value||0,left:+amounts.left.value||0};
+          const ow=_exW+pd.left+pd.right, oh=_exH+pd.top+pd.bottom;
+          const mp=ow*oh/1000000;
+          tx(_exAfter,"After  "+ow+" \u00d7 "+oh+"   ("+mp.toFixed(1)+" MP)");
+          // Far lower than Upscale's 32/64: SeedVR2 tiles, this runs the 9B image model over
+          // the whole canvas at once. Measured on a 24GB card - an ordinary 1.4 MP render
+          // takes about 45s, and a 6.6 MP expand never started sampling at all. Nothing
+          // measured between those, so these sit either side of what is known and the strong
+          // warning quotes the size that actually failed rather than claiming a general limit.
+          if(mp>=6){ tx(_exWarn,"Very large \u2014 6.6 MP did not complete on a 24 GB card. "
+            +"Expand less, or shrink the frame first."); _exWarn.style.display="block"; }
+          else if(mp>=4){ tx(_exWarn,"Large \u2014 expect a slow run."); _exWarn.style.display="block"; }
+          else _exWarn.style.display="none";
+        };
+        Object.values(amounts).forEach(inp=>{ inp.addEventListener("input",_exSync); });
+        _exSync();
         const gen=_canvasMkGenRow("Expand");
-        panel.append(hint,ta,grid,gen.row);
+        panel.append(hint,ta,grid,_exBox,gen.row);
         const goBtn=gen.goBtn;
         closeBtn.onclick=()=>panel.remove();
         goBtn.onclick=async()=>{
