@@ -1,0 +1,179 @@
+{
+  "AK:ckpt": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltxv-2b-0.9.8-distilled-fp8.safetensors"
+    }
+  },
+  "AK:clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "ltxv"
+    }
+  },
+  "AK:pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["AK:clip", 0],
+      "text": "the camera moves smoothly between the given views"
+    }
+  },
+  "AK:neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["AK:clip", 0],
+      "text": "low quality, worst quality, deformed, distorted, watermark, jitter, flicker, morphing"
+    }
+  },
+  "AK:lat": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {
+      "width": 768,
+      "height": 576,
+      "length": 97,
+      "batch_size": 1
+    }
+  },
+  "AK:img0": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "PLACEHOLDER.png", "upload": "image" }
+  },
+  "AK:img1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "PLACEHOLDER.png", "upload": "image" }
+  },
+  "AK:img2": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "PLACEHOLDER.png", "upload": "image" }
+  },
+  "AK:img3": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "PLACEHOLDER.png", "upload": "image" }
+  },
+  "AK:g0": {
+    "class_type": "LTXVAddGuide",
+    "inputs": {
+      "positive": ["AK:pos", 0],
+      "negative": ["AK:neg", 0],
+      "vae": ["AK:ckpt", 2],
+      "latent": ["AK:lat", 0],
+      "image": ["AK:img0", 0],
+      "frame_idx": 0,
+      "strength": 1.0
+    }
+  },
+  "AK:g1": {
+    "class_type": "LTXVAddGuide",
+    "inputs": {
+      "positive": ["AK:g0", 0],
+      "negative": ["AK:g0", 1],
+      "vae": ["AK:ckpt", 2],
+      "latent": ["AK:g0", 2],
+      "image": ["AK:img1", 0],
+      "frame_idx": 48,
+      "strength": 1.0
+    }
+  },
+  "AK:g2": {
+    "class_type": "LTXVAddGuide",
+    "inputs": {
+      "positive": ["AK:g1", 0],
+      "negative": ["AK:g1", 1],
+      "vae": ["AK:ckpt", 2],
+      "latent": ["AK:g1", 2],
+      "image": ["AK:img2", 0],
+      "frame_idx": 72,
+      "strength": 1.0
+    }
+  },
+  "AK:g3": {
+    "class_type": "LTXVAddGuide",
+    "inputs": {
+      "positive": ["AK:g2", 0],
+      "negative": ["AK:g2", 1],
+      "vae": ["AK:ckpt", 2],
+      "latent": ["AK:g2", 2],
+      "image": ["AK:img3", 0],
+      "frame_idx": 96,
+      "strength": 1.0
+    }
+  },
+  "AK:cond": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": ["AK:g3", 0],
+      "negative": ["AK:g3", 1],
+      "frame_rate": 24.0
+    }
+  },
+  "AK:sched": {
+    "class_type": "LTXVScheduler",
+    "inputs": {
+      "steps": 8,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "stretch": true,
+      "terminal": 0.1,
+      "latent": ["AK:g3", 2]
+    }
+  },
+  "AK:sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": { "sampler_name": "euler" }
+  },
+  "AK:guider": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "model": ["AK:ckpt", 0],
+      "positive": ["AK:cond", 0],
+      "negative": ["AK:cond", 1],
+      "cfg": 1.0
+    }
+  },
+  "AK:noise": {
+    "class_type": "RandomNoise",
+    "inputs": { "noise_seed": 0 }
+  },
+  "AK:adv": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": ["AK:noise", 0],
+      "guider": ["AK:guider", 0],
+      "sampler": ["AK:sampler", 0],
+      "sigmas": ["AK:sched", 0],
+      "latent_image": ["AK:g3", 2]
+    }
+  },
+  "AK:crop": {
+    "class_type": "LTXVCropGuides",
+    "inputs": {
+      "positive": ["AK:cond", 0],
+      "negative": ["AK:cond", 1],
+      "latent": ["AK:adv", 0]
+    }
+  },
+  "AK:decode": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["AK:crop", 2],
+      "vae": ["AK:ckpt", 2]
+    }
+  },
+  "AK:video": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": ["AK:decode", 0],
+      "fps": 24.0
+    }
+  },
+  "AK:save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["AK:video", 0],
+      "filename_prefix": "one-node-flux2klein-canvas/CLIP",
+      "format": "auto",
+      "codec": "auto"
+    }
+  }
+}

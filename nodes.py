@@ -507,6 +507,9 @@ PromptServer.instance.routes.get("/flux_klein_canvas/workflow_suggest")(_serve_j
 # LTX-Video image-to-video. The only template whose result is a clip rather than stills, and
 # the only one whose model must not share the card with klein - see the animate panel.
 PromptServer.instance.routes.get("/flux_klein_canvas/workflow_animate")(_serve_json("workflows/animate_workflow.json"))
+# Keyframed animate: the same model, but the clip is made to travel through images the
+# user picked, instead of whatever motion the prompt happens to produce.
+PromptServer.instance.routes.get("/flux_klein_canvas/workflow_animate_keys")(_serve_json("workflows/animate_keys_workflow.json"))
 
 
 @PromptServer.instance.routes.get("/flux_klein_canvas/bgremoval_models")
@@ -1821,11 +1824,18 @@ async def get_models(request):
     except Exception:
         loras = ["none"]
 
+    # Checkpoints - LTX-Video ships as one, unlike klein which is a bare diffusion model.
+    try:
+        ckpts = _scan("checkpoints")
+    except Exception:
+        ckpts = ["none"]
+
     return web.json_response({
         "diffusion_models": diff,
         "text_encoders": te,
         "vaes": vaes,
         "loras": loras,
+        "checkpoints": ckpts,
     })
 
 

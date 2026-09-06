@@ -1019,6 +1019,11 @@ app.registerExtension({
           upscaleImage: saved.upscaleImage||null,  // UPSCALE pill: source image
           upscaleModel: saved.upscaleModel||"",    // seedvr2 diffusion model
           upscaleVae:   saved.upscaleVae||"",      // seedvr2 ema vae
+          // Animate (LTX-Video): its own checkpoint and text encoder. Empty means "whatever
+          // the workflow template names", which is what shipped - so an untouched install
+          // behaves exactly as it did before these existed.
+          videoModel: saved.videoModel||"",         // LTX-Video checkpoint
+          videoClip:  saved.videoClip||"",          // its text encoder (t5xxl for 0.9.x)
           upscaleFactor: saved.upscaleFactor||2,   // 2 | 4 | 6 | 8 (UPSCALE pill)
           upscaleTile:   saved.upscaleTile||512,   // VAE tile size: 512 | 256 | 128 (lower = less VRAM)
           // Optional shrink BEFORE upscaling (0 = off). SeedVR2 adds far more detail when it
@@ -1101,6 +1106,7 @@ app.registerExtension({
           batchCount:S.batchCount, autoSave:S.autoSave, autoSend:S.autoSend,
           poseImage:S.poseImage, poseRef:S.poseRef, poseLora:S.poseLora,
           poseUseSizeSource:S.poseUseSizeSource, poseResizeLonger:S.poseResizeLonger,
+          videoModel:S.videoModel, videoClip:S.videoClip,
           upscaleImage:S.upscaleImage, upscaleModel:S.upscaleModel, upscaleVae:S.upscaleVae,
           upscaleFactor:S.upscaleFactor, upscalePreLonger:S.upscalePreLonger, upscaleTile:S.upscaleTile,
           quickUpscaleFactor:S.quickUpscaleFactor,
@@ -1552,6 +1558,22 @@ app.registerExtension({
       _upBoxGrid.append(upModelF.wrap,upVaeF.wrap);
       _upBox.append(_upBoxGrid);
 
+      // Animate's model gets the same treatment as SeedVR2's: its own box, because it is a
+      // different model family from klein and that separation should be visible. No keyword
+      // auto-select here - "none" means "leave the template's own filename alone", and
+      // picking one for the user would silently change which model their install runs.
+      const vidModelF=mkModDD("Video Model (LTX-Video)","models/checkpoints",
+        S.videoModel||"none",v=>{S.videoModel=v==="none"?"":v;persist();});
+      const vidClipF=mkModDD("Video Text Encoder","models/text_encoders",
+        S.videoClip||"none",v=>{S.videoClip=v==="none"?"":v;persist();});
+      const _vidBox=mk("div",{
+        border:`1px solid ${C.border}`,borderRadius:"8px",padding:"10px",
+        marginBottom:"16px",background:"rgba(255,255,255,.012)",
+      });
+      const _vidBoxGrid=mk("div",{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"});
+      _vidBoxGrid.append(vidModelF.wrap,vidClipF.wrap);
+      _vidBox.append(_vidBoxGrid);
+
       // ── Preferences ───────────────────────────────────────────────────────
       const prefTitle=mk("div",{fontSize:"10px",fontWeight:"700",letterSpacing:".1em",
         textTransform:"uppercase",color:C.muted,padding:"10px 0 2px",
@@ -1669,7 +1691,7 @@ app.registerExtension({
       _dsRow.append(_dsTop,_dsHint);
       _dsApplyEnabled();
 
-      settingsOverlay.append(settHdr,modGrid,_kvNote,_baseNote,_loraBox,_upBox,prefTitle,soundToggle.el,advUIToggle.el,extLoadersToggle.el,_dsRow);
+      settingsOverlay.append(settHdr,modGrid,_kvNote,_baseNote,_loraBox,_upBox,_vidBox,prefTitle,soundToggle.el,advUIToggle.el,extLoadersToggle.el,_dsRow);
 
       // ── Overlay helpers ───────────────────────────────────────────────────
       // The full-screen surfaces - opaque, inset:0, covering the whole node. Two open at
@@ -15650,9 +15672,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         {k:"upscale",   label:"Upscale",    dispatch:"tool",  min:1, max:1,
          hint:"SeedVR2, 2× to 8×.",
          run:(ctx)=>_canvasStartUpscale(ctx.frames[0])},
-        {k:"animate",   label:"Animate",    dispatch:"tool",  min:1, max:1,
-         hint:"A short clip from this image. It lands on the board beside it \u2014 point at it to play.",
-         run:(ctx)=>_canvasStartAnimate(ctx.frames[0])},
+        {k:"animate",   label:"Animate",    dispatch:"tool",  min:1, max:4,
+         hint:"A short clip from this image. Pick two to four and the clip travels through "
+             +"them in order. It lands on the board \u2014 point at it to play.",
+         run:(ctx)=>_canvasStartAnimate(ctx.frames)},
         {k:"palette",   label:"Extract Colors", dispatch:"panel", min:1, max:1,
          hint:"Pull a colour palette out of this image. Edit the swatches and save them."},
         {k:"pose",      label:"Pose",       dispatch:"tool",  min:2, max:2,
@@ -16514,14 +16537,60 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // certain rather than probable.
       // Animate. An export rather than a board operation: the board holds stills, and a
       // clip is not one.
-      const _canvasStartAnimate=async(frame)=>{
-        if(!frame) return;
+      // Frame indices for N waypoints across a clip of `length` frames: first at 0, last at
+      // the final frame, the rest evenly spaced. LTXVAddGuide accepts any index for a
+      // single-image guide, so nothing has to round to multiples of 8 here.
+      const _canvasKeyIdxs=(n,length)=>{
+        if(n<=1) return [0];
+        const last=Math.max(1,length-1);
+        return Array.from({length:n},(_,i)=>Math.round(i*last/(n-1)));
+      };
+      const _canvasStartAnimate=async(framesIn)=>{
+        // One frame or a list; every caller before this passed one.
+        let keys=(Array.isArray(framesIn)?framesIn:[framesIn]).filter(Boolean).slice(0,4);
+        if(!keys.length) return;
+        const frame=keys[0];
         const {panel,closeBtn}=_canvasMakePanelShell(frame.x+frame.w+12,frame.y,"Animate");
         const note=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.5"});
         tx(note,"The first frame is this image. The finished clip lands on the board beside "
           +"it \u2014 point at it to play \u2014 and is saved to your output folder too.");
         const ta=_canvasMkPromptTA("How should it move? e.g. the camera slowly orbits the car");
         ta.value="";
+        // ── Waypoints ──
+        // The order is the order they were selected in, which a marquee does not control,
+        // so show it rather than document it.
+        const wayWrap=mk("div",{flexDirection:"column",gap:"4px",
+          display:keys.length>1?"flex":"none"});
+        const wayHead=mk("div",{display:"flex",alignItems:"center",justifyContent:"space-between"});
+        const wayLbl=mk("div",{fontSize:"7px",color:C.dim,letterSpacing:".1em",
+          textTransform:"uppercase"});
+        const wayRev=mk("button",{background:"transparent",border:`1px solid ${C.border}`,
+          color:C.muted,borderRadius:"4px",padding:"2px 6px",fontSize:"8px",cursor:"pointer"});
+        tx(wayRev,"Reverse");
+        wayRev.title="Run the waypoints the other way round.";
+        wayHead.append(wayLbl,wayRev);
+        const wayRow=mk("div",{display:"flex",gap:"4px",flexWrap:"wrap"});
+        const wayNote=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.5"});
+        tx(wayNote,"Keep the move going one way. A sequence that doubles back collapses the "
+          +"subject where it turns.");
+        wayWrap.append(wayHead,wayRow,wayNote);
+        const renderWays=()=>{
+          tx(wayLbl,"Travels through "+keys.length+" images");
+          wayRow.innerHTML="";
+          const idxs=_canvasKeyIdxs(keys.length,frames);
+          keys.forEach((f,i)=>{
+            const cell=mk("div",{display:"flex",flexDirection:"column",alignItems:"center",gap:"2px"});
+            const th=mk("img",{width:"38px",height:"28px",objectFit:"cover",borderRadius:"3px",
+              border:`1px solid ${C.border}`},{draggable:false});
+            try{ th.src=(f.kind==="clip")?_canvasClipPosterUrl(f):_canvasFileUrl(f); }catch(e){}
+            const cap=mk("div",{fontSize:"7px",color:C.muted});
+            tx(cap,i===0?"start":(i===keys.length-1?"end":"f"+idxs[i]));
+            cell.append(th,cap);
+            wayRow.appendChild(cell);
+          });
+        };
+        wayRev.onclick=()=>{ keys=keys.slice().reverse(); renderWays(); };
+
         const lenRow=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
         const lenLbl=mk("div",{fontSize:"8px",color:C.muted,whiteSpace:"nowrap",minWidth:"48px"});
         tx(lenLbl,"Length");
@@ -16535,11 +16604,15 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           b.onclick=()=>{ frames=L.f; sync(); };
           lenRow.appendChild(b); return {L,b};
         });
-        const sync=()=>lenBtns.forEach(({L,b})=>{
-          const on=L.f===frames;
-          b.style.background=on?LIME:C.bg2; b.style.color=on?"#111":C.text;
-          b.style.borderColor=on?LIME:C.border;
-        });
+        const sync=()=>{
+          lenBtns.forEach(({L,b})=>{
+            const on=L.f===frames;
+            b.style.background=on?LIME:C.bg2; b.style.color=on?"#111":C.text;
+            b.style.borderColor=on?LIME:C.border;
+          });
+          // The waypoint captions carry frame numbers, which move when the length does.
+          if(keys.length>1) renderWays();
+        };
         lenRow.insertBefore(lenLbl,lenRow.firstChild);
         const warn=mk("div",{fontSize:"8px",color:C.warn,lineHeight:"1.5"});
         tx(warn,"The video model cannot share the card with the image model, so this unloads "
@@ -16548,8 +16621,37 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           padding:"7px",fontSize:"10px",fontWeight:"700",cursor:"pointer"});
         tx(go,"Animate");
         const status=mk("div",{fontSize:"8px",color:C.muted,lineHeight:"1.5",display:"none"});
-        panel.append(note,ta,lenRow,warn,go,status);
+        panel.append(note,wayWrap,ta,lenRow,warn,go,status);
         sync();
+        // A missing checkpoint fails ComfyUI's validation, and this path surfaces the status
+        // code rather than the reason - so give the reason before the button is pressed.
+        // Never block the panel on a failed check: if the listing cannot be read, let the run
+        // speak for itself rather than refusing on a guess.
+        (async()=>{
+          try{
+            const r=await api.fetchApi("/flux_klein_canvas/models");
+            if(!r.ok) return;
+            const d=await r.json();
+            const have=((d&&d.checkpoints)||[]).filter(x=>x&&x!=="none");
+            // No list at all means the scan failed or this backend predates the key. Both are
+            // uncertainty, not evidence, and refusing on uncertainty disables a feature that
+            // works. Only a list we can actually read is allowed to block anything.
+            if(!have.length) return;
+            // With a Settings choice, that exact file has to be there. Without one, the
+            // template's own name is used, so any LTX checkpoint is evidence enough.
+            const ok=S.videoModel ? have.indexOf(S.videoModel)!==-1
+                                  : have.some(x=>/ltx/i.test(x));
+            if(ok) return;
+            go.disabled=true; go.style.opacity="0.5";
+            status.style.display="block";
+            tx(status,S.videoModel
+              ? "The Video Model set in Settings ("+S.videoModel+") is not in "
+                +"models/checkpoints any more. Pick another one there."
+              : "No LTX-Video checkpoint found in models/checkpoints. Install one \u2014 this "
+                +"was built against ltxv-2b-0.9.8-distilled \u2014 then pick it under Video "
+                +"Model in Settings.");
+          }catch(e){ /* leave the panel usable */ }
+        })();
         closeBtn.onclick=()=>panel.remove();
 
         go.onclick=async()=>{
@@ -16563,21 +16665,53 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               await api.fetchApi("/free",{method:"POST",headers:{"Content-Type":"application/json"},
                 body:JSON.stringify({unload_models:true,free_memory:true})});
             }catch(e){ console.warn("[FluxKlein] pre-animate free:",e); }
-            const wfR=await api.fetchApi("/flux_klein_canvas/workflow_animate");
-            if(!wfR.ok) throw new Error(`Could not load workflow_animate (HTTP ${wfR.status}).`);
+            // Reverse can have changed which waypoint is first since the panel opened.
+            const first=keys[0];
+            const multi=keys.length>1;
+            const route=multi?"workflow_animate_keys":"workflow_animate";
+            const wfR=await api.fetchApi("/flux_klein_canvas/"+route);
+            if(!wfR.ok) throw new Error(`Could not load ${route} (HTTP ${wfR.status}).`);
             const prompt=JSON.parse(JSON.stringify(await wfR.json()));
-            const srcName=await _canvasUploadFrame(frame);
             const set=(id,k,v)=>{ if(prompt[id]) prompt[id].inputs[k]=v; };
-            set("AN:img","image",srcName);
-            set("AN:pos","text",ta.value.trim()||"the camera slowly orbits the subject, "
-              +"smooth cinematic motion");
-            set("AN:i2v","length",frames);
-            // Keep the source's shape but land on the multiples LTX wants.
-            const ar=(frame.w&&frame.h)?frame.w/frame.h:1.5;
+            // A Settings choice wins over the template; empty leaves the template's own
+            // filename, which is what an untouched install does.
+            const pfx=multi?"AK":"AN";
+            if(S.videoModel) set(pfx+":ckpt","ckpt_name",S.videoModel);
+            if(S.videoClip)  set(pfx+":clip","clip_name",S.videoClip);
+            // Shape comes from the first waypoint; the rest are encoded into the same latent,
+            // so they all end up at this size whatever they were on the board.
+            const ar=(first.w&&first.h)?first.w/first.h:1.5;
             const W=Math.max(256,Math.round((ar>=1?768:768*ar)/32)*32);
             const H=Math.max(256,Math.round((ar>=1?768/ar:768)/32)*32);
-            set("AN:i2v","width",W); set("AN:i2v","height",H);
-            set("AN:noise","noise_seed",_canvasSeed());
+            const typed=ta.value.trim();
+            if(multi){
+              tx(status,`Uploading ${keys.length} waypoints\u2026`);
+              const names=[];
+              for(const f of keys) names.push(await _canvasUploadFrame(f));
+              const idxs=_canvasKeyIdxs(keys.length,frames);
+              names.forEach((nm,i)=>{ set("AK:img"+i,"image",nm); set("AK:g"+i,"frame_idx",idxs[i]); });
+              // Drop the guide slots this run does not need and hand the chain's tail to
+              // whatever was reading the last one. Unreachable nodes are never executed, but
+              // removing them keeps the submitted graph honest about what it did.
+              const last="AK:g"+(keys.length-1);
+              for(let i=keys.length;i<4;i++){ delete prompt["AK:g"+i]; delete prompt["AK:img"+i]; }
+              if(prompt["AK:cond"]){ prompt["AK:cond"].inputs.positive=[last,0];
+                                     prompt["AK:cond"].inputs.negative=[last,1]; }
+              if(prompt["AK:sched"]) prompt["AK:sched"].inputs.latent=[last,2];
+              if(prompt["AK:adv"]) prompt["AK:adv"].inputs.latent_image=[last,2];
+              set("AK:pos","text",typed||"a smooth continuous camera move through the given "
+                +"views, the subject stays whole and centred");
+              set("AK:lat","width",W); set("AK:lat","height",H); set("AK:lat","length",frames);
+              set("AK:noise","noise_seed",_canvasSeed());
+            } else {
+              const srcName=await _canvasUploadFrame(first);
+              set("AN:img","image",srcName);
+              set("AN:pos","text",typed||"the camera slowly orbits the subject, "
+                +"smooth cinematic motion");
+              set("AN:i2v","length",frames);
+              set("AN:i2v","width",W); set("AN:i2v","height",H);
+              set("AN:noise","noise_seed",_canvasSeed());
+            }
             tx(status,`Rendering ${frames} frames at ${W}\u00d7${H}\u2026 this is slower than an image.`);
             const outs=await _canvasRunText(prompt);
             let file=null;
@@ -16590,12 +16724,13 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             // Height from the rendered W/H rather than the frame's, because those were
             // rounded to the multiples of 32 the model wants.
             const secs=Math.max(1,Math.round((frames-1)/24));
-            const ch=Math.max(1,Math.round(frame.w*H/W));
-            const spot=_canvasFindFreeSpot(frame.x+frame.w+40,frame.y,frame.w,ch);
-            const nf=_canvasAddFrame({x:spot.x,y:spot.y,w:frame.w,h:ch,kind:"clip",
+            const ch=Math.max(1,Math.round(first.w*H/W));
+            const spot=_canvasFindFreeSpot(first.x+first.w+40,first.y,first.w,ch);
+            const nf=_canvasAddFrame({x:spot.x,y:spot.y,w:first.w,h:ch,kind:"clip",
               filename:file.filename,subfolder:file.subfolder||"",type:file.type||"output",
-              poster:frame.filename||"",posterSub:frame.subfolder||"",
-              posterType:frame.type||"output",secs,name:secs+"s clip"});
+              poster:first.filename||"",posterSub:first.subfolder||"",
+              posterType:first.type||"output",secs,
+              name:multi?(secs+"s clip \u00b7 "+keys.length+" views"):(secs+"s clip")});
             _canvasSelectFrame(nf.id);
             _canvasPersistFramesDebounced();
             tx(status,"On the board, and saved as "+file.filename+".");
@@ -22397,6 +22532,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           };
           poseLoraF.dd.updateItems(loraOpts);
           { const m=_matchLora(S.poseLora||""); if(m&&m!=="none"){poseLoraF.dd.set(m);S.poseLora=m;} else{poseLoraF.dd.set("none");S.poseLora="";} }
+          // Animate dropdowns. "none" stays selected unless the saved value is actually
+          // present, so a fresh install keeps using the template's own filenames.
+          const ckptOpts=["none",...(d.checkpoints||[]).filter(f=>f!=="none")];
+          const teOpts=["none",...teList];
+          vidModelF.dd.updateItems(ckptOpts);
+          vidModelF.dd.set(ckptOpts.includes(S.videoModel)?S.videoModel:"none");
+          if(!ckptOpts.includes(S.videoModel)) S.videoModel="";
+          vidClipF.dd.updateItems(teOpts);
+          vidClipF.dd.set(teOpts.includes(S.videoClip)?S.videoClip:"none");
+          if(!teOpts.includes(S.videoClip)) S.videoClip="";
           // Upscaler dropdowns — the SeedVR2 model lives in diffusion_models and its VAE in vae,
           // so they reuse the same scans; keyword auto-select only when nothing is saved yet.
           {
