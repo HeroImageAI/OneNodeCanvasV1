@@ -353,7 +353,14 @@ model and no ControlNet — the capability was already here, behind a mode named
 else.
 
 **Animate** — a 2, 4 or 6 second clip from a still via LTX-Video. The clip lands on the board
-as a frame that plays when you point at it, and is saved as an mp4 as well. Select two to
+as a frame that plays when you point at it, and is saved as an mp4 as well. It also appears in
+the gallery, where it plays on hover and opens in a real player.
+
+**Gallery** — lists clips alongside images, and a Kind filter narrows to Images, Videos or
+Masks. Masks are the working images the Pick part tool leaves behind, and hiding them is most
+of the reason the filter exists. The filter is answered by the server, so picking Videos finds
+every clip rather than the ones that happen to be on screen. Anything can be deleted from
+either the rail preview or the full-screen lightbox, with its metadata and favourite entry. Select two to
 four images instead of one and the clip travels through them as waypoints, which is how you
 get a controlled turntable rather than a vague drift. Its model is now chosen in Settings
 like every other one.
