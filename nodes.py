@@ -1125,6 +1125,24 @@ async def save_config_route(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+GALLERY_VIDEO_EXTS = (".mp4", ".webm", ".mov")
+
+
+def _gallery_kind(path_or_name):
+    """What a gallery entry is, from its name alone.
+
+    Video is an extension test. Mask is the SAMMASK prefix that sam_point_workflow.json
+    saves with - those are working intermediates from the Pick part tool, and they are the
+    main thing worth filtering out. Everything else is a render.
+    """
+    low = os.path.basename(path_or_name).lower()
+    if low.endswith(GALLERY_VIDEO_EXTS):
+        return "video"
+    if low.startswith("sammask"):
+        return "mask"
+    return "image"
+
+
 @PromptServer.instance.routes.get("/flux_klein_canvas/gallery")
 async def get_gallery(request):
     output_dir = _get_output_dir()
@@ -1138,6 +1156,9 @@ async def get_gallery(request):
         limit = 20
     subf = request.query.get("subfolder", "")
     favonly = request.query.get("favonly", "0") == "1"
+    kind = request.query.get("kind", "")
+    if kind not in ("image", "mask", "video"):
+        kind = ""
     try:
         search = _safe_resolve_output_path(output_dir, subf) if subf else output_dir
     except ValueError:
@@ -1165,9 +1186,15 @@ async def get_gallery(request):
         exclude_assets = not search_norm.startswith(assets_dir + os.sep) and search_norm != assets_dir
         unique = []
         if os.path.isdir(search):
-            pngs = glob.glob(os.path.join(search, "**", "*.png"), recursive=True)
-            filtered = [p for p in pngs if not exclude_assets or not os.path.normpath(p).startswith(assets_dir + os.sep)]
+            found = glob.glob(os.path.join(search, "**", "*.png"), recursive=True)
+            for ext in GALLERY_VIDEO_EXTS:
+                found += glob.glob(os.path.join(search, "**", "*" + ext), recursive=True)
+            filtered = [p for p in found if not exclude_assets or not os.path.normpath(p).startswith(assets_dir + os.sep)]
             unique = sorted(set(filtered), key=os.path.getmtime, reverse=True)
+
+    # Before paging, so total and offset describe the list the caller is actually walking.
+    if kind:
+        unique = [f for f in unique if _gallery_kind(f) == kind]
 
     fav_set = _load_favorites() if not favonly else fav_names
     images = []
@@ -1181,6 +1208,7 @@ async def get_gallery(request):
             "key": _file_key(fname, "" if rel == "." else rel),
             "has_meta": os.path.exists(_meta_path(f)) or os.path.exists(_meta_path_legacy(f)),
             "favorite": fname in fav_set,
+            "kind": _gallery_kind(fname),
         })
     return web.json_response({"images": images, "total": len(unique), "offset": offset, "limit": limit})
 

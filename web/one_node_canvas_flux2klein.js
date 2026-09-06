@@ -8850,6 +8850,38 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // Drop an existing server file onto the board. Measures the real image first so the
       // frame matches its aspect ratio instead of guessing a square.
       const _canvasAddExistingFile=(v,pos)=>new Promise((resolve)=>{
+        // A clip cannot be probed with new Image(), and an image frame pointing at an mp4 is
+        // a permanently broken tile. The board already has a clip frame; use it, and take the
+        // poster from the clip's own sidecar - src[0] is the first waypoint, which is the
+        // frame it opens on. No sidecar (a clip made before they existed) means no poster:
+        // black behind the badge, still playable, still openable.
+        if(/\.(mp4|webm|mov)$/i.test(v.filename||"")){
+          (async()=>{
+            let poster=null, secs=0, aspect=4/3;
+            try{
+              const r=await api.fetchApi(`/flux_klein_canvas/meta?filename=${encodeURIComponent(v.filename)}`
+                +`&subfolder=${encodeURIComponent(v.subfolder||"")}`);
+              if(r.ok){
+                const d=await r.json();
+                const m=(d&&d.ok!==false)?(d.meta||d):null;
+                if(m&&Array.isArray(m.src)&&m.src[0]) poster=m.src[0];
+                if(m&&+m.secs) secs=+m.secs;
+                if(m&&+m.w&&+m.h) aspect=(+m.w)/(+m.h);
+              }
+            }catch(e){}
+            const w=480, h=Math.max(1,Math.round(480/aspect));
+            const spot=_canvasFindFreeSpotNear(pos.x-w/2,pos.y-h/2,w,h);
+            const f=_canvasAddFrame({x:spot.x,y:spot.y,w,h,kind:"clip",
+              filename:v.filename,subfolder:v.subfolder||"",type:v.type||"output",
+              poster:(poster&&poster.filename)||"",posterSub:(poster&&poster.subfolder)||"",
+              posterType:(poster&&poster.type)||"output",secs,
+              name:(secs?secs+"s clip":"clip")});
+            _canvasSelectFrame(f.id);
+            _canvasPersistFramesDebounced();
+            resolve(f);
+          })();
+          return;
+        }
         const url=_canvasFileUrl(v);
         const probe=new Image();
         const place=(iw,ih)=>{
@@ -8984,7 +9016,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       };
       _railSizeRow.append(_railSizeLbl,_railSizeInp);
       // ── Filter (Phase 7) ──────────────────────────────────────────────────
-      const _railFilter={text:"",days:0,colour:""};
+      // kind is the one filter applied by the server: text, colour and date narrow what is
+      // already loaded, which is fine when most things match, but three clips among several
+      // hundred renders would never be in the loaded page to narrow.
+      const _railFilter={text:"",days:0,colour:"",kind:""};
       const _railMetaCache=new Map();          // "subfolder/filename" -> meta | null
 
       const _railMetaFor=async(v)=>{
@@ -9072,11 +9107,21 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       });
       _railDateSel.addEventListener("pointerdown",e=>e.stopPropagation());
       _railDateSel.onchange=()=>{ _railFilter.days=+_railDateSel.value||0; _railApplyFilter(); };
-      _railFilterRow.append(_railSearchInp,_railDateSel);
+      const _railKindSel=mk("select",{background:C.bg2,border:`1px solid ${C.border}`,
+        borderRadius:"5px",color:C.text,fontSize:"9px",padding:"4px"});
+      [["","All"],["image","Images"],["video","Videos"],["mask","Masks"]].forEach(([v,t])=>{
+        const o=document.createElement("option"); o.value=v; o.textContent=t;
+        _railKindSel.appendChild(o);
+      });
+      _railKindSel.title="Masks are the working images the Pick part tool leaves behind.";
+      _railKindSel.addEventListener("pointerdown",e=>e.stopPropagation());
+      // Reloads rather than hides: this one is answered by the server.
+      _railKindSel.onchange=()=>{ _railFilter.kind=_railKindSel.value||""; _railLoad(true); };
+      _railFilterRow.append(_railSearchInp,_railKindSel,_railDateSel);
       // Kept visible whenever a filter is set even if the result is empty - otherwise a filter
       // that matches nothing would hide the only means of clearing it.
       const _railSyncFilterVis=()=>{
-        const has=(_railItems&&_railItems.length)||_railFilterActive();
+        const has=(_railItems&&_railItems.length)||_railFilterActive()||!!_railFilter.kind;
         _railFilterRow.style.display=has?"flex":"none";
         _railColourRow.style.display=has?"flex":"none";
       };
@@ -9254,7 +9299,31 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         "started saving them.");
       const _railPrevPlace=_edMkBtnLike("Place on board");
       const _railPrevFav=_edMkBtnLike("\u2606 Favourite");
-      _railPrevFoot.append(_railPrevDims,_railPrevMeta,_railPrevNoMeta,_railPrevPlace,_railPrevFav);
+      // Quiet until hovered, like Empty trash and the per-board Delete: it sits beside the
+      // two buttons you came here to press, and should not catch a stray click aimed at them.
+      const _railPrevDel=_edMkBtnLike("Delete");
+      _railPrevDel.title="Delete this file from disk. This cannot be undone.";
+      _railPrevDel.style.color=C.muted;
+      _railPrevDel.onmouseenter=()=>{ _railPrevDel.style.color="#ff6b6b";
+        _railPrevDel.style.borderColor="#ff6b6b"; };
+      _railPrevDel.onmouseleave=()=>{ _railPrevDel.style.color=C.muted;
+        _railPrevDel.style.borderColor=C.border; };
+      _railPrevDel.onclick=()=>{
+        const v=_railPrevItem; if(!v) return;
+        _deleteImage(v,_railPrevDel,()=>{
+          // Stop the preview player first: leaving a <video> pointed at a file that has just
+          // been removed is how you get a console full of network errors.
+          if(_railPrevVid){ try{ _railPrevVid.pause(); }catch(e){} _railPrevVid.removeAttribute("src"); }
+          _railPrev.style.display="none";
+          _railPrevItem=null;
+          // Reload rather than splice: the title's count and the paging offset both describe
+          // one server-side list, and decrementing them by hand is how a gallery starts
+          // skipping entries as you scroll.
+          _railLoad(true);
+        });
+      };
+      _railPrevFoot.append(_railPrevDims,_railPrevMeta,_railPrevNoMeta,_railPrevPlace,
+        _railPrevFav,_railPrevDel);
 
       let _railPrevMetaObj=null;
       const _railLoadMeta=async(v)=>{
@@ -9348,10 +9417,40 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           type:_railPrevItem.type||"output"});
         _railPrev.style.display="none";
       };
+      // One <video> reused across previews, created on first need so an install that never
+      // makes a clip never builds it.
+      let _railPrevVid=null;
+      const _railPrevVideoEl=()=>{
+        if(_railPrevVid) return _railPrevVid;
+        _railPrevVid=mk("video",{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",
+          display:"none",background:"#000",borderRadius:"4px"});
+        _railPrevVid.controls=true; _railPrevVid.loop=true; _railPrevVid.muted=true;
+        _railPrevVid.playsInline=true; _railPrevVid.setAttribute("playsinline","");
+        _railPrevVid.preload="metadata";
+        try{ _railPrevImg.parentElement.insertBefore(_railPrevVid,_railPrevImg.nextSibling); }
+        catch(e){ return null; }
+        return _railPrevVid;
+      };
       const _railOpenPreview=(v)=>{
         _railPrevItem=v;
         tx(_railPrevName,v.filename);
         tx(_railPrevDims,"Loading\u2026");
+        if(_fkIsVideoItem(v)){
+          const vid=_railPrevVideoEl();
+          _railPrevImg.style.display="none";
+          if(vid){
+            vid.style.display="block";
+            vid.src=_railImgUrl(v);
+            vid.onloadedmetadata=()=>tx(_railPrevDims,
+              `${vid.videoWidth} \u00d7 ${vid.videoHeight} \u00b7 ${vid.duration.toFixed(1)}s`);
+          }
+          _railSetFavUI(!!v.favorite);
+          _railPrev.style.display="flex";
+          _railLoadMeta(v);
+          return;
+        }
+        if(_railPrevVid){ try{ _railPrevVid.pause(); }catch(e){} _railPrevVid.style.display="none"; }
+        _railPrevImg.style.display="";
         _railPrevImg.onload=()=>tx(_railPrevDims,
           `${_railPrevImg.naturalWidth} \u00d7 ${_railPrevImg.naturalHeight}`);
         _railPrevImg.src=_railImgUrl(v);
@@ -9363,6 +9462,39 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _railImgUrl=(v)=>api.apiURL(`/view?filename=${encodeURIComponent(v.filename)}`+
         `&type=${v.type||"output"}&subfolder=${encodeURIComponent(v.subfolder||"")}`)
         +"&t="+(v.mtime||0);
+      // The server sends a kind; the extension test is the fallback for a backend that
+      // predates it, so an older install degrades to "no videos listed" rather than to
+      // broken <img> tags.
+      const _fkIsVideoItem=(v)=>(v&&v.kind==="video")||/\.(mp4|webm|mov)$/i.test((v&&v.filename)||"");
+      // Metadata only: enough for the browser to paint the first frame, without pulling the
+      // whole clip for every tile in a grid. #t=0.1 is what makes it paint that frame rather
+      // than a black poster.
+      const _fkMakeVideoThumb=(v,css)=>{
+        const el=mk("video",Object.assign({display:"block",background:C.bg3},css||{}));
+        el.muted=true; el.loop=true; el.playsInline=true;
+        el.setAttribute("playsinline",""); el.preload="metadata";
+        el.src=_railImgUrl(v)+"#t=0.1";
+        return el;
+      };
+      const _fkClipBadge=(txt)=>{
+        const b=mk("div",{position:"absolute",left:"4px",bottom:"4px",padding:"1px 5px",
+          borderRadius:"4px",background:"rgba(8,8,8,.72)",color:LIME,fontSize:"9px",
+          fontWeight:"700",pointerEvents:"none",zIndex:"2",transition:"opacity .12s"});
+        tx(b,txt||"\u25b6");
+        return b;
+      };
+      // Hover to play, leave to stop and rewind - the same gesture a clip frame on the board
+      // uses, so a clip behaves the same wherever you meet it.
+      const _fkHoverPlay=(cell,vid,badge)=>{
+        cell.addEventListener("pointerenter",()=>{
+          if(badge) badge.style.opacity="0";
+          const pr=vid.play(); if(pr&&pr.catch) pr.catch(()=>{});
+        });
+        cell.addEventListener("pointerleave",()=>{
+          try{ vid.pause(); vid.currentTime=0.1; }catch(e){}
+          if(badge) badge.style.opacity="1";
+        });
+      };
 
       const _railAppend=(images)=>{
         images.forEach(v=>{
@@ -9384,11 +9516,18 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           cell.addEventListener("pointerdown",e=>e.stopPropagation());
           // "contain", not "cover": a centre-cropped square made a 1152x640 render look
           // square, so you could not tell a wide composition from a tall one.
-          const im=mk("img",{width:"100%",height:"100%",objectFit:"contain",display:"block",
-            background:C.bg3},{draggable:false});
-          im.loading="lazy";
-          im.src=_railImgUrl(v);
-          cell.appendChild(im);
+          if(_fkIsVideoItem(v)){
+            const vid=_fkMakeVideoThumb(v,{width:"100%",height:"100%",objectFit:"contain"});
+            const badge=_fkClipBadge("\u25b6");
+            cell.append(vid,badge);
+            _fkHoverPlay(cell,vid,badge);
+          } else {
+            const im=mk("img",{width:"100%",height:"100%",objectFit:"contain",display:"block",
+              background:C.bg3},{draggable:false});
+            im.loading="lazy";
+            im.src=_railImgUrl(v);
+            cell.appendChild(im);
+          }
           // Favourite marker, shown when set. Toggled from the preview.
           const star=mk("div",{position:"absolute",top:"3px",right:"4px",fontSize:"10px",
             color:LIME,textShadow:"0 1px 3px rgba(0,0,0,.9)",pointerEvents:"none",
@@ -9412,7 +9551,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         tx(_railTitle,"Gallery \u2026");
         try{
           const r=await api.fetchApi(
-            `/flux_klein_canvas/gallery?offset=${_railOffset}&limit=${RAIL_PAGE}&subfolder=one-node-flux2klein-canvas`);
+            `/flux_klein_canvas/gallery?offset=${_railOffset}&limit=${RAIL_PAGE}`
+            +`&subfolder=one-node-flux2klein-canvas`
+            +(_railFilter.kind?`&kind=${encodeURIComponent(_railFilter.kind)}`:""));
           const d=await r.json();
           const imgs=d.images||[];
           _railTotal=d.total||0;
@@ -21235,7 +21376,24 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       galClose.onmouseenter=()=>galClose.style.opacity=".7";
       galClose.onmouseleave=()=>galClose.style.opacity="1";
 
-      galHdrRight.append(galFavBtn,galRefreshBtn,galClose);
+      // Answered by the server, like Favorites and unlike anything else here: three clips
+      // among several hundred renders would never be in the loaded page for a local filter
+      // to find, and an empty grid reads as "there are none".
+      let _galKind="";
+      const galKindSel=mk("select",{background:C.bg3,border:`1px solid ${C.border}`,
+        borderRadius:"6px",padding:"4px 8px",fontSize:"11px",color:C.muted,
+        cursor:"pointer",outline:"none"});
+      [["","All"],["image","Images"],["video","Videos"],["mask","Masks"]].forEach(([v,t])=>{
+        const o=document.createElement("option"); o.value=v; o.textContent=t;
+        galKindSel.appendChild(o);
+      });
+      galKindSel.title="Masks are the working images the Pick part tool leaves behind.";
+      galKindSel.onchange=()=>{ _galKind=galKindSel.value||"";
+        galKindSel.style.color=_galKind?LIME:C.muted;
+        galKindSel.style.borderColor=_galKind?LIME:C.border;
+        galLoad(true); };
+
+      galHdrRight.append(galKindSel,galFavBtn,galRefreshBtn,galClose);
       galHdr.append(galTitle,galHdrRight);
 
       // Grid + scroll area
@@ -21301,11 +21459,18 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // Body: arrows + image wrap as flex siblings (full-height arrows like LTX node)
       const lbBody=mk("div",{display:"flex",alignItems:"center",flex:"1",
         minHeight:"0",position:"relative",gap:"8px",padding:"0 8px"});
+      // A clip needs a different element from an image, so the lightbox holds both and
+      // shows whichever the entry is. Built once, not per open.
       const lbImgWrap=mk("div",{flex:"1",minWidth:"0",display:"flex",alignItems:"center",
         justifyContent:"center",overflow:"hidden",height:"100%",minHeight:"0"});
       const lbImg=mk("img",{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",
         borderRadius:"8px",display:"block"});
       lbImgWrap.appendChild(lbImg);
+      const lbVid=mk("video",{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",
+        display:"none",background:"#000",borderRadius:"6px"});
+      lbVid.controls=true; lbVid.loop=true; lbVid.playsInline=true;
+      lbVid.setAttribute("playsinline",""); lbVid.preload="metadata";
+      lbImgWrap.appendChild(lbVid);
       // Prev / Next arrows — flex siblings, full height
       const lbArrowL=mk("button",{background:"rgba(255,255,255,.08)",border:"none",
         borderRadius:"6px",width:"36px",flexShrink:"0",alignSelf:"stretch",
@@ -21681,7 +21846,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           "#0a0a0a";
       };
 
-      const _lbClose=()=>{ lightbox.style.display="none"; _lbActiveImg=null; };
+      const _lbClose=()=>{
+        try{ lbVid.pause(); }catch(e){} lightbox.style.display="none"; _lbActiveImg=null; };
 
       // Active navigation list — all images or favorites-only depending on current filter
       let _lbNavList=[];
@@ -21707,7 +21873,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         if(e.key==="ArrowRight"){ e.preventDefault(); e.stopPropagation(); _lbNav(_lbIdx+1); return; }
         if(e.key==="f"||e.key==="F"){
           e.preventDefault();
-          if(!document.fullscreenElement) lbImg.requestFullscreen().catch(()=>{});
+          const el=(lbVid.style.display!=="none")?lbVid:lbImg;
+          if(!document.fullscreenElement) el.requestFullscreen().catch(()=>{});
           else document.exitFullscreen().catch(()=>{});
         }
       },{capture:true});
@@ -21718,7 +21885,14 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         _lbIdx=idx??0;
         _lbRefreshSetOut(); // enable/disable "Set as output" by whether our image output is wired
         tx(lbFilename,v.filename);
-        lbImg.src=_galImgUrl(v)+"&t="+v.mtime;
+        if(_fkIsVideoItem(v)){
+          lbImg.style.display="none"; lbImg.removeAttribute("src");
+          lbVid.style.display="block"; lbVid.src=_galImgUrl(v)+"&t="+v.mtime;
+        } else {
+          try{ lbVid.pause(); }catch(e){}
+          lbVid.style.display="none"; lbVid.removeAttribute("src");
+          lbImg.style.display=""; lbImg.src=_galImgUrl(v)+"&t="+v.mtime;
+        }
         lbMeta.style.display="none";lbRestoreBtn.style.display="none";
         lbPromptText.textContent="";
         lightbox.style.display="flex";
@@ -22068,13 +22242,25 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             }catch(e){}
           });
 
-          // Thumbnail
-          const thumb=mk("img",{
-            width:"100%",height:"100%",objectFit:"cover",
-            display:"block",background:C.bg3,position:"absolute",inset:"0",
-          });
-          thumb.loading="lazy";
-          thumb.src=_galImgUrl(v)+"&t="+v.mtime;
+          // Thumbnail. A clip gets a <video> instead: metadata-only so the browser paints
+          // frame one without pulling the file, and it plays while the pointer is over it.
+          const isVid=_fkIsVideoItem(v);
+          let thumb, vidBadge=null;
+          if(isVid){
+            thumb=mk("video",{width:"100%",height:"100%",objectFit:"cover",
+              display:"block",background:"#000",position:"absolute",inset:"0"});
+            thumb.muted=true; thumb.loop=true; thumb.playsInline=true;
+            thumb.setAttribute("playsinline",""); thumb.preload="metadata";
+            thumb.src=_galImgUrl(v)+"&t="+v.mtime+"#t=0.1";
+            vidBadge=_fkClipBadge("\u25b6");
+          } else {
+            thumb=mk("img",{
+              width:"100%",height:"100%",objectFit:"cover",
+              display:"block",background:C.bg3,position:"absolute",inset:"0",
+            });
+            thumb.loading="lazy";
+            thumb.src=_galImgUrl(v)+"&t="+v.mtime;
+          }
 
           // Hover overlay
           const ov=mk("div",{position:"absolute",inset:"0",background:"rgba(0,0,0,.35)",
@@ -22100,13 +22286,22 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           favIco.appendChild(_mkHeart("11px"));
 
           cell.append(thumb,ov,strip,favIco);
+          if(vidBadge) cell.appendChild(vidBadge);
 
-          cell.onmouseenter=()=>{ cell.style.borderColor=LIME;ov.style.opacity="1"; };
-          cell.onmouseleave=()=>{ cell.style.borderColor=C.border;ov.style.opacity="0"; };
+          cell.onmouseenter=()=>{ cell.style.borderColor=LIME;ov.style.opacity="1";
+            if(isVid){ if(vidBadge) vidBadge.style.opacity="0";
+              const pr=thumb.play(); if(pr&&pr.catch) pr.catch(()=>{}); } };
+          cell.onmouseleave=()=>{ cell.style.borderColor=C.border;ov.style.opacity="0";
+            if(isVid){ try{ thumb.pause(); thumb.currentTime=0.1; }catch(e){}
+              if(vidBadge) vidBadge.style.opacity="1"; } };
 
           cell.onclick=()=>{ _lbNavList=images; lbShow(v,idx); };
           cell.addEventListener("contextmenu",(e)=>{
             e.preventDefault();
+            // Every entry on this menu loads the file into an image slot - I2I, Edit, paint,
+            // faceswap, pose, upscale. None of them take a clip, and loading one quietly
+            // fails minutes later inside a sampler.
+            if(isVid) return;
             _galCtxImg=v;
             _galCtxMenu.style.display="flex";
             _galCtxMenu.style.left=e.clientX+"px";
@@ -22143,7 +22338,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             tx(galTitle,`Gallery  (${_galTotal} fav)`);
             galMoreWrap.style.display=_galOffset<_galTotal?"flex":"none";
           } else {
-            const r=await api.fetchApi(`/flux_klein_canvas/gallery?offset=${_galOffset}&limit=${limit}&subfolder=one-node-flux2klein-canvas`);
+            const r=await api.fetchApi(`/flux_klein_canvas/gallery?offset=${_galOffset}&limit=${limit}&subfolder=one-node-flux2klein-canvas`
+              +(_galKind?`&kind=${encodeURIComponent(_galKind)}`:""));
             const d=await r.json();
             const newImgs=d.images||[];
             _galTotal=d.total||0;
