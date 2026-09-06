@@ -16466,7 +16466,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       selDupBtn.onclick=()=>{
         const f=_canvasFrames.find(x=>x.id===_canvasSelId);
         if(!f||!f.filename) return; // only server-backed frames (image/gen) can be cloned safely
-        const nf=_canvasAddFrame({x:f.x+24,y:f.y+24,w:f.w,h:f.h,kind:f.kind,filename:f.filename,subfolder:f.subfolder,type:f.type,name:f.name});
+        const nf=_canvasAddFrame(Object.assign({x:f.x+24,y:f.y+24,w:f.w,h:f.h,kind:f.kind,
+          filename:f.filename,subfolder:f.subfolder,type:f.type,name:f.name},
+          _canvasClipExtras(f)));
         _canvasSelectFrame(nf.id);
         _canvasPersistFramesDebounced();
       };
