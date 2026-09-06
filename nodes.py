@@ -3,6 +3,7 @@ import io
 import json
 import glob
 import time
+import threading
 import uuid
 import subprocess
 import shutil
@@ -303,8 +304,12 @@ def _migrate_meta_sidecars():
 
 
 # â”€â”€ PNG tEXt chunk helpers (no external deps) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-def _png_embed_meta(png_path, meta_dict):
-    """Embed metadata JSON into a PNG file as a tEXt chunk with keyword 'Comment'."""
+def _png_embed_meta(png_path, meta_dict, quiet=False):
+    """Embed metadata JSON into a PNG file as a tEXt chunk with keyword 'Comment'.
+
+    quiet suppresses the note when the caller is the background retry, which would otherwise
+    log the same file once per attempt.
+    """
     import struct, zlib
     try:
         with open(png_path, "rb") as f:
@@ -389,9 +394,78 @@ def _png_embed_meta(png_path, meta_dict):
         # Not a failure worth alarming about: the JSON sidecar in metadata/ is the store the
         # gallery actually reads, and it is written separately. Embedding only adds
         # portability if the PNG is moved out of the project.
-        print(f"[FluxKlein] note: could not embed metadata into "
-              f"{os.path.basename(png_path)} (file locked); sidecar written instead.")
+        if not quiet:
+            print(f"[FluxKlein] note: {os.path.basename(png_path)} was busy; "
+                  f"embedding metadata again shortly (sidecar already written).")
         return False
+
+
+# Files whose embed lost a race with a reader, waiting to be tried again.
+# path -> [meta_dict, original_mtime, attempts]
+_META_RETRY = {}
+_META_RETRY_LOCK = threading.Lock()
+_META_RETRY_THREAD = None
+_META_RETRY_DELAY = 15.0     # seconds between sweeps
+_META_RETRY_MAX = 4          # give up after about a minute
+
+
+def _meta_retry_worker():
+    """Re-attempt embeds that lost a race with whoever was reading the file.
+
+    Runs off the request thread on purpose. The in-line ladder in _write_json_meta already
+    covers a reader that finishes quickly; what lands here is a file still being streamed,
+    and the only useful response to that is to stop competing and come back later.
+    """
+    while True:
+        time.sleep(_META_RETRY_DELAY)
+        with _META_RETRY_LOCK:
+            if not _META_RETRY:
+                # Nothing outstanding: let the thread end rather than idle forever. The next
+                # deferral starts a new one.
+                _globals_clear_thread()
+                return
+            batch = list(_META_RETRY.items())
+        for path, entry in batch:
+            meta, orig_mtime, attempts = entry
+            ok = False
+            if os.path.exists(path):
+                ok = _png_embed_meta(path, meta, quiet=True)
+                if ok and orig_mtime is not None:
+                    try:
+                        os.utime(path, (orig_mtime, orig_mtime))
+                    except Exception:
+                        pass
+            else:
+                # Deleted while we waited. Not a failure; there is nothing to embed into.
+                ok = True
+            with _META_RETRY_LOCK:
+                if path not in _META_RETRY:
+                    continue
+                if ok:
+                    del _META_RETRY[path]
+                else:
+                    entry[2] = attempts + 1
+                    if entry[2] >= _META_RETRY_MAX:
+                        del _META_RETRY[path]
+                        print(f"[FluxKlein] note: gave up embedding metadata into "
+                              f"{os.path.basename(path)} after {_META_RETRY_MAX} attempts; "
+                              f"the sidecar in metadata/ still has it.")
+
+
+def _globals_clear_thread():
+    global _META_RETRY_THREAD
+    _META_RETRY_THREAD = None
+
+
+def _defer_png_embed(png_path, meta_dict, orig_mtime):
+    """Queue a failed embed for another go, and make sure the sweeper is running."""
+    global _META_RETRY_THREAD
+    with _META_RETRY_LOCK:
+        _META_RETRY[png_path] = [meta_dict, orig_mtime, 0]
+        if _META_RETRY_THREAD is None or not _META_RETRY_THREAD.is_alive():
+            _META_RETRY_THREAD = threading.Thread(target=_meta_retry_worker,
+                                                  name="fkmeta-retry", daemon=True)
+            _META_RETRY_THREAD.start()
 
 
 def _png_read_meta(png_path):
@@ -459,6 +533,10 @@ def _write_json_meta(image_path, meta_dict):
             except Exception:
                 pass
             pass   # embedded fine; no need to log one line per render
+        else:
+            # Almost always a reader still streaming the frame the board has just added.
+            # Come back to it off the request thread instead of blocking here.
+            _defer_png_embed(image_path, meta_dict, orig_mtime)
     # Also write JSON sidecar into metadata/ subdir
     mp = _meta_path(image_path)
     tmp = mp + ".tmp"
