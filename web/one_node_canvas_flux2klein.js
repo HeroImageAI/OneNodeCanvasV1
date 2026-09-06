@@ -9738,6 +9738,14 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         document.addEventListener("pointerup",up);
       };
 
+      // What the box was drawn over. The panel uses it to decide whether Keep original
+      // applies; _canvasGenerateBox uses it to choose between i2i and t2i. They have to be
+      // the same test, or the panel offers a setting the graph will not read.
+      const _canvasBoxOverlaps=(box)=>{
+        const bx1=box.x+box.w, by1=box.y+box.h;
+        return _canvasFrames.filter(f=>f.x<bx1&&f.x+f.w>box.x&&f.y<by1&&f.y+f.h>box.y);
+      };
+
       const _canvasOpenBoxPanel=(box)=>{
         const panel=mk("div",{position:"absolute",zIndex:"5",background:"rgba(12,12,12,.94)",
           border:`1px solid ${C.borderH}`,borderRadius:"8px",padding:"8px",display:"flex",
@@ -9758,6 +9766,11 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         tx(denoiseVal,Math.round(+S.canvasDenoise*100)+"%");
         denoiseInp.oninput=()=>tx(denoiseVal,Math.round(+denoiseInp.value*100)+"%");
         row.append(denoiseLbl,denoiseInp,denoiseVal);
+        // Stands in for the slider rather than leaving a gap: the question the slider
+        // answers ("how much of what is here survives") has no meaning over empty canvas,
+        // but the reader still wants to know what pressing Generate will do.
+        const emptyNote=mk("div",{fontSize:"8px",color:C.muted,fontStyle:"italic"});
+        tx(emptyNote,"Empty area \u2014 generating from the prompt alone.");
         const btnRow=mk("div",{display:"flex",gap:"6px"});
         const genBtn=mk("button",{flex:"1",background:LIME,color:"#111",border:"none",borderRadius:"5px",
           padding:"6px",fontSize:"10px",fontWeight:"700",cursor:"pointer"});
@@ -9766,7 +9779,15 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           borderRadius:"5px",padding:"6px 10px",fontSize:"10px",cursor:"pointer"});
         tx(cancelBtn,"✕");
         btnRow.append(genBtn,cancelBtn);
-        panel.append(ta,row,btnRow);
+        panel.append(ta,row,emptyNote,btnRow);
+        // Re-read rather than cached: frames can be deleted, moved or added while the panel
+        // sits open, and the slider must stop claiming to apply the moment it stops applying.
+        const _syncKeepVis=()=>{
+          const over=_canvasBoxOverlaps(box).length>0;
+          row.style.display=over?"flex":"none";
+          emptyNote.style.display=over?"none":"block";
+        };
+        _syncKeepVis();
         panel.style.zoom=String(_canvasScale());
         // Same marker every other panel carries. Without it the viewport's pointerdown
         // handler falls through to the marquee branch and calls setPointerCapture, which
@@ -9780,6 +9801,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
           const k=_canvasHostScale();
           const sx=(box.x*_canvasCamZoom+_canvasCamX)*k, sy=((box.y+box.h)*_canvasCamZoom+_canvasCamY)*k;
           panel.style.left=Math.max(4,sx)+"px"; panel.style.top=(sy+6)+"px";
+          _syncKeepVis();
           _canvasNudgeIntoView(panel);
         };
         box._reposition();
@@ -9801,8 +9823,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         box.genBtn.disabled=true; tx(box.genBtn,"Generating…");
         const reset=()=>{ box.genBtn.disabled=false; tx(box.genBtn,"Generate"); };
 
-        const bx0=box.x,by0=box.y,bx1=box.x+box.w,by1=box.y+box.h;
-        const overlapping=_canvasFrames.filter(f=>f.x<bx1&&f.x+f.w>bx0&&f.y<by1&&f.y+f.h>by0);
+        const bx0=box.x,by0=box.y;
+        const overlapping=_canvasBoxOverlaps(box);
         // The box is drawn in board units and could be tiny; keep its shape but lift it
         // to a usable generation size.
         const boxK=Math.max(1,MIN_GEN_SIDE/Math.max(1,Math.min(box.w,box.h)));
