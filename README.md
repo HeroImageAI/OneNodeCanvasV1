@@ -65,9 +65,31 @@ reads off it: run Extract Colors or Variations on a clip and you get the palette
 variations on, that first frame. The Actions panel says so before you press Generate. The
 layer editor declines a clip — there is nothing to paint on.
 
-Expect a partial orbit rather than a full turn: at six seconds LTX comes round about a
-quarter of the way, smoothly and without warping the product, but a complete 360 needs
-several clips stitched together.
+**Waypoints.** Select two to four board images and Animate lays them along the clip: the
+first is frame 0, the last is the final frame, the rest evenly spaced. The clip then travels
+through them. Front, three-quarter, side gives a clean ninety-degree turntable in four
+seconds. The panel shows the order it will use — which is the order you selected them in,
+and a marquee does not control that — with a Reverse button.
+
+Keep the move going one way. A sequence that doubles back (A to B to A) collapses the subject
+where it turns; that was measured, not guessed.
+
+Waypoints are the answer to "it barely rotates". Without them the model paces whatever motion
+it settles on across the length it is given, so six seconds does not turn further than two,
+and no amount of prompting changes that. Two things that sound like they should help and do
+not: spatiotemporal guidance made no visible difference at cfg 1 on the distilled model, and
+lowering the conditioning frame rate produced far more motion along with a second porthole,
+sprouting legs and a morphing body.
+
+**Choosing the model.** Video Model and Video Text Encoder live in Settings beside the
+SeedVR2 pair. Both default to "none", which means "use whatever the workflow template names"
+— so an install that never opens Settings behaves exactly as it always did. The panel checks
+the checkpoint is installed before offering to run.
+
+On LTX 2.x: it is a 22B model — 21.5 GB for the int8 transformer plus 15.4 GB for its Gemma-4
+text encoder — and Lightricks' own ComfyUI node pack asks for 32 GB of VRAM. It will not run
+usefully on a 24 GB card. Everything above was gained from the 2B model and the node suite
+that is already installed.
 
 **Pose** and **Faceswap** — copy a pose, or a face, from a second image.
 
@@ -331,7 +353,10 @@ model and no ControlNet — the capability was already here, behind a mode named
 else.
 
 **Animate** — a 2, 4 or 6 second clip from a still via LTX-Video. The clip lands on the board
-as a frame that plays when you point at it, and is saved as an mp4 as well.
+as a frame that plays when you point at it, and is saved as an mp4 as well. Select two to
+four images instead of one and the clip travels through them as waypoints, which is how you
+get a controlled turntable rather than a vague drift. Its model is now chosen in Settings
+like every other one.
 
 Also fixed along the way: overlapping full-screen overlays could stack, leaving the lower one
 invisible but still live; un-dismissed generate-boxes and floating panels survived a project
@@ -346,6 +371,11 @@ the view, which is where "stuck panels on my canvas" came from. Every floating p
 up and to the left a little further each time its contents changed. Suggest left its reader
 model on the card, and the next render crawled for six minutes because of it. And the
 editor's Generate hid below the fold of its own panel as soon as you switched to Inpaint.
+
+Two more from a full pass of the regression checklist: duplicating a clip lost its poster, so
+the copy came out as a black frame; and Expand had four number fields and no arithmetic, so
+it would quietly start a job too large to finish — it now shows the resulting size and warns,
+the way Upscale always has.
 
 ---
 
