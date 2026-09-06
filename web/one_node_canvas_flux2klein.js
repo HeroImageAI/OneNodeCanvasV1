@@ -16718,6 +16718,10 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             const W=Math.max(256,Math.round((ar>=1?768:768*ar)/32)*32);
             const H=Math.max(256,Math.round((ar>=1?768/ar:768)/32)*32);
             const typed=ta.value.trim();
+            // Kept for the sidecar: what the run was actually given, not what was typed.
+            // A blank box still submits a default, and the record should say which.
+            const seed=_canvasSeed();
+            let submitted="", keyIdxs=null;
             if(multi){
               tx(status,`Uploading ${keys.length} waypoints\u2026`);
               const names=[];
@@ -16733,18 +16737,20 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
                                      prompt["AK:cond"].inputs.negative=[last,1]; }
               if(prompt["AK:sched"]) prompt["AK:sched"].inputs.latent=[last,2];
               if(prompt["AK:adv"]) prompt["AK:adv"].inputs.latent_image=[last,2];
-              set("AK:pos","text",typed||"a smooth continuous camera move through the given "
-                +"views, the subject stays whole and centred");
+              submitted=typed||"a smooth continuous camera move through the given views, "
+                +"the subject stays whole and centred";
+              keyIdxs=idxs;
+              set("AK:pos","text",submitted);
               set("AK:lat","width",W); set("AK:lat","height",H); set("AK:lat","length",frames);
-              set("AK:noise","noise_seed",_canvasSeed());
+              set("AK:noise","noise_seed",seed);
             } else {
               const srcName=await _canvasUploadFrame(first);
               set("AN:img","image",srcName);
-              set("AN:pos","text",typed||"the camera slowly orbits the subject, "
-                +"smooth cinematic motion");
+              submitted=typed||"the camera slowly orbits the subject, smooth cinematic motion";
+              set("AN:pos","text",submitted);
               set("AN:i2v","length",frames);
               set("AN:i2v","width",W); set("AN:i2v","height",H);
-              set("AN:noise","noise_seed",_canvasSeed());
+              set("AN:noise","noise_seed",seed);
             }
             tx(status,`Rendering ${frames} frames at ${W}\u00d7${H}\u2026 this is slower than an image.`);
             const outs=await _canvasRunText(prompt);
@@ -16767,6 +16773,27 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               name:multi?(secs+"s clip \u00b7 "+keys.length+" views"):(secs+"s clip")});
             _canvasSelectFrame(nf.id);
             _canvasPersistFramesDebounced();
+            // The same record every image gets, so a clip is not the one thing on the board
+            // with no history. src is the lineage key, and _canvasSrcMeta already produces
+            // the shape _canvasBuildLineage reads - so the waypoints become the clip's
+            // parents on the board for free. Fire and forget: a metadata write must never
+            // hold up showing the result, exactly as in _canvasRun.
+            try{
+              const clipMeta=Object.assign({
+                v:1, mode:"animate", created:Date.now(),
+                prompt:submitted,
+                negative:(prompt[pfx+":neg"]&&prompt[pfx+":neg"].inputs.text)||"",
+                seed, w:W, h:H,
+                model:(prompt[pfx+":ckpt"]&&prompt[pfx+":ckpt"].inputs.ckpt_name)||"",
+                textEncoder:(prompt[pfx+":clip"]&&prompt[pfx+":clip"].inputs.clip_name)||"",
+                frames, fps:24, secs,
+              },keyIdxs?{keyframes:keyIdxs}:{},_canvasSrcMeta(keys));
+              api.fetchApi("/flux_klein_canvas/save_meta",{method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({filename:file.filename,
+                  subfolder:file.subfolder||"",meta:clipMeta}),
+              }).catch(()=>{});
+            }catch(e){ console.warn("[FluxKlein] clip meta:",e); }
             tx(status,"On the board, and saved as "+file.filename+".");
             const open=mk("button",{background:C.bg2,color:C.text,border:`1px solid ${C.border}`,
               borderRadius:"5px",padding:"5px 8px",fontSize:"9px",cursor:"pointer",marginTop:"4px"});
