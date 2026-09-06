@@ -9770,13 +9770,16 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const ta=mk("textarea",{width:"100%",minHeight:"40px",resize:"vertical",fontSize:"10px",
           background:C.bg2,color:C.text,border:`1px solid ${C.border}`,borderRadius:"5px",
           padding:"5px",boxSizing:"border-box",fontFamily:"inherit"});
-        // S.promptCanvas is written in one place only - the generate-box panel - so this
-        // seeds every panel with "the last thing you typed into a box you drew on the board".
-        // Three of the five callers clear it on the next line, because they have something
-        // better: the prompt recorded against the frame they were opened on. If you are
-        // adding a panel that does, clear it too - and note that leaving it also disables any
-        // `!ta.value` guard you write, because the box is already full.
-        ta.placeholder=placeholder; ta.value=S.promptCanvas||"";
+        // Deliberately empty. This used to open every panel holding S.promptCanvas - "the
+        // last thing you typed into a box you drew on the board" - which was wrong for all
+        // five callers: Refine and Expand want the prompt recorded against the frame they
+        // were opened on, and Pose and Faceswap want their own defaults, which an inherited
+        // value silently overrode. It also disabled the `!ta.value` guards those panels use
+        // to avoid overwriting someone mid-sentence, because the box was never empty.
+        //
+        // S.promptCanvas still belongs to the generate-box panel, which reads it directly:
+        // drawing another box and getting your last prompt back is what it was added for.
+        ta.placeholder=placeholder;
         return ta;
       };
       // ── Subject detection ────────────────────────────────────────────────
@@ -11985,7 +11988,6 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const hint=mk("div",{fontSize:"8px",color:C.muted});
         tx(hint,"Holds the composition and resolves detail. Add material or lighting notes if you want them emphasised.");
         const ta=_canvasMkPromptTA("Optional: materials, lighting, finish\u2026");
-        ta.value="";
         // Anchor the pass to the subject. Without it the model only knows "make this
         // sharper", and at the higher strengths it will redesign the product rather
         // than finish it. Best-effort: a dropped-in image has no sidecar.
@@ -15368,11 +15370,6 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const hint=mk("div",{fontSize:"8px",color:C.muted});
         tx(hint,"Grow the image outwards and let the model fill the new space.");
         const ta=_canvasMkPromptTA("What continues outside the frame\u2026");
-        // Drop the inherited last-typed prompt, as Refine and Animate do. It is not just
-        // irrelevant here - it made the `!ta.value` guard below true on arrival, so the
-        // frame's own prompt could never land and an outpaint of one subject was being
-        // described with another.
-        ta.value="";
         // Prefill with the prompt that produced this frame. Without it the model is
         // told nothing about the subject and fills the new space with soft grey
         // filler instead of more of the same scene. Best-effort: a dropped-in image
@@ -16600,7 +16597,6 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         tx(note,"The first frame is this image. The finished clip lands on the board beside "
           +"it \u2014 point at it to play \u2014 and is saved to your output folder too.");
         const ta=_canvasMkPromptTA("How should it move? e.g. the camera slowly orbits the car");
-        ta.value="";
         // ── Waypoints ──
         // The order is the order they were selected in, which a marquee does not control,
         // so show it rather than document it.
