@@ -8545,6 +8545,29 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       // ── Frame model ───────────────────────────────────────────────────────
       const _canvasFileUrl=(f)=>api.apiURL(`/view?filename=${encodeURIComponent(f.filename)}&type=${f.type||"input"}&subfolder=${encodeURIComponent(f.subfolder||"")}`);
+      // A clip's still. It is the image the clip was generated from - its own first frame -
+      // so it is the honest thing to show when the video is not playing, and the honest
+      // thing to hand to anything that wants pixels.
+      const _canvasClipPosterUrl=(f)=>(f&&f.poster)
+        ? api.apiURL(`/view?filename=${encodeURIComponent(f.poster)}&type=${f.posterType||"output"}`
+            +`&subfolder=${encodeURIComponent(f.posterSub||"")}`)
+        : "";
+      // Decoding starts on the first hover, not on load: a board of clips should cost a
+      // board of stills until you ask to watch one.
+      const _canvasClipPlay=(f)=>{
+        const v=f&&f._videoEl; if(!v) return;
+        if(v.preload!=="auto"){ v.preload="auto"; try{ v.load(); }catch(e){} }
+        v.style.display="block";
+        if(f._clipBadge) f._clipBadge.style.opacity="0";
+        const pr=v.play();
+        if(pr&&pr.catch) pr.catch(()=>{});
+      };
+      const _canvasClipStop=(f)=>{
+        const v=f&&f._videoEl; if(!v) return;
+        try{ v.pause(); v.currentTime=0; }catch(e){}
+        v.style.display="none";
+        if(f._clipBadge) f._clipBadge.style.opacity="1";
+      };
       const _canvasUpdateEmptyHint=()=>{
         const has=_canvasFrames.length
           ||(typeof _canvasBlocks!=="undefined"&&_canvasBlocks&&_canvasBlocks.length)
@@ -8556,15 +8579,40 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const wrap=mk("div",{position:"absolute",left:"0",top:"0",boxSizing:"border-box",
           border:"2px solid transparent",borderRadius:"3px",overflow:"hidden",cursor:"move"});
         wrap.dataset.canvasFrame=String(f.id);
-        let contentEl;
+        let contentEl, clipVid=null, clipBadge=null;
         if(f.kind==="sketch"&&f._canvasEl){
           contentEl=f._canvasEl;
           Object.assign(contentEl.style,{width:"100%",height:"100%",display:"block",background:"#fff",pointerEvents:"none"});
+        } else if(f.kind==="clip"){
+          // Poster first and permanently: it is what every other code path reads off this
+          // frame. The video is a second element stacked exactly over it.
+          contentEl=mk("img",{width:"100%",height:"100%",display:"block",objectFit:"fill",
+            pointerEvents:"none",background:"#111"},{draggable:false});
+          const pu=_canvasClipPosterUrl(f);
+          if(pu) contentEl.src=pu;
+          clipVid=mk("video",{position:"absolute",left:"0",top:"0",width:"100%",height:"100%",
+            objectFit:"fill",display:"none",pointerEvents:"none",background:"#000"});
+          clipVid.muted=true; clipVid.loop=true; clipVid.playsInline=true;
+          clipVid.preload="none"; clipVid.setAttribute("playsinline","");
+          clipVid.src=_canvasFileUrl(f);
+          clipBadge=mk("div",{position:"absolute",left:"6px",bottom:"6px",padding:"2px 6px",
+            borderRadius:"4px",background:"rgba(8,8,8,.72)",color:LIME,fontSize:"11px",
+            fontWeight:"700",letterSpacing:".04em",pointerEvents:"none",zIndex:"3",
+            transition:"opacity .12s"});
+          tx(clipBadge,"\u25b6 "+(f.secs?f.secs+"s":"clip"));
         } else {
           contentEl=mk("img",{width:"100%",height:"100%",display:"block",objectFit:"fill",pointerEvents:"none"},{draggable:false});
           contentEl.src=_canvasFileUrl(f);
         }
         wrap.appendChild(contentEl);
+        if(clipVid){
+          wrap.appendChild(clipVid); wrap.appendChild(clipBadge);
+          f._videoEl=clipVid; f._clipBadge=clipBadge;
+          // Hover, not click: click already means select, and a board that starts playing
+          // video every time you pick something up is a board that fights you.
+          wrap.addEventListener("pointerenter",()=>_canvasClipPlay(f));
+          wrap.addEventListener("pointerleave",()=>_canvasClipStop(f));
+        }
         const busyOv=mk("div",{position:"absolute",inset:"0",display:"none",alignItems:"center",justifyContent:"center",
           background:"rgba(8,8,8,.55)",color:LIME,fontSize:"10px",fontWeight:"700",letterSpacing:".08em",
           textTransform:"uppercase",pointerEvents:"none"});
@@ -8717,9 +8765,13 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       const _CANVAS_TAGS=[["","None"],["#e5484d","Red"],["#f5a524","Amber"],
         ["#46a758","Green"],["#0091ff","Blue"],["#8e4ec6","Purple"],["#8b8d98","Grey"]];
 
-      const _canvasSerializeFrame=(f)=>({id:f.id,x:f.x,y:f.y,w:f.w,h:f.h,tag:f.tag||"",
+      // Written only for clips, so a board with none is byte-for-byte what it was before.
+      const _canvasClipExtras=(f)=>(!f||f.kind!=="clip")?null:{
+        poster:f.poster||"",posterSub:f.posterSub||"",posterType:f.posterType||"output",
+        secs:+f.secs||0};
+      const _canvasSerializeFrame=(f)=>Object.assign({id:f.id,x:f.x,y:f.y,w:f.w,h:f.h,tag:f.tag||"",
         kind:f.kind==="sketch"?"image":f.kind,filename:f.filename,subfolder:f.subfolder||"",
-        type:f.type||"input",name:f.name||""});
+        type:f.type||"input",name:f.name||""},_canvasClipExtras(f));
       let _canvasPersistTimer=null;
       // Set once the user has been asked whether to save an emptied board, so a declined
       // save cannot turn into a dialog on every retry. Cleared on a successful save and on
@@ -11694,6 +11746,12 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       // shapes are accepted by the route, so callers do not have to care which they hold.
       const _svgItemForFrame=(f)=>{
         if(!f) return null;
+        // A clip's filename is an mp4; the tracer wants an image, and the poster is the
+        // frame it would have traced anyway.
+        if(f.kind==="clip") return f.poster
+          ? {filename:f.poster,subfolder:f.posterSub||"",type:f.posterType||"output",
+             name:f.name||f.poster}
+          : null;
         if(f.filename) return {filename:f.filename,subfolder:f.subfolder||"",
                                type:f.type||"output",name:f.name||f.filename};
         if(f._contentEl&&f._contentEl.toDataURL)
@@ -12003,9 +12061,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
       let _canvasUndo=[], _canvasRedoStack=[], _canvasHistoryMuted=false;
 
       const _canvasSceneSnapshot=()=>({
-        frames:_canvasFrames.map(f=>({id:f.id,x:f.x,y:f.y,w:f.w,h:f.h,kind:f.kind,
+        frames:_canvasFrames.map(f=>Object.assign({id:f.id,x:f.x,y:f.y,w:f.w,h:f.h,kind:f.kind,
           filename:f.filename,subfolder:f.subfolder||"",type:f.type||"input",name:f.name||"",
-          tag:f.tag||""})),
+          tag:f.tag||""},_canvasClipExtras(f))),
         notes:(_canvasNotes||[]).map(nt=>({id:nt.id,x:nt.x,y:nt.y,text:nt.text||"",size:nt.size||30})),
         blocks:(_canvasBlocks||[]).map(b=>_canvasSerializeBlock(b)),
         groups:(_canvasGroups||[]).map(_canvasSerializeGroup),
@@ -12056,7 +12114,9 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
             f.subfolder=sf.subfolder||"";
             f.type=sf.type||"input";
             if(sf.kind) f.kind=sf.kind;
-            if(srcChanged&&sf.filename&&f._contentEl){
+            // A clip's file never changes under it, and its _contentEl is a poster, not
+            // the video - rebuilding it as an <img> around an mp4 would blank the frame.
+            if(srcChanged&&sf.filename&&f._contentEl&&f.kind!=="clip"){
               const img=mk("img",{width:"100%",height:"100%",display:"block",objectFit:"fill",
                 pointerEvents:"none"},{draggable:false});
               img.src=_canvasFileUrl(f)+"&t="+Date.now();
@@ -14128,6 +14188,12 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
 
       // ---- open / close ----
       const _canvasOpenEditor=(frame)=>{
+        // Committing here writes a PNG over frame.filename, which for a clip is the mp4.
+        if(frame&&frame.kind==="clip"){
+          _canvasShowError("That is a clip, so there is nothing to paint on. "
+            +"Double-click it to watch it full size, or animate an image to make another.");
+          return;
+        }
         if(!frame||!frame._contentEl){ _canvasShowError("Nothing to edit in that frame."); return; }
         const el=frame._contentEl;
         _edW=Math.max(1,el.naturalWidth||el.width||Math.round(frame.w));
@@ -15585,7 +15651,7 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
          hint:"SeedVR2, 2× to 8×.",
          run:(ctx)=>_canvasStartUpscale(ctx.frames[0])},
         {k:"animate",   label:"Animate",    dispatch:"tool",  min:1, max:1,
-         hint:"A short clip from this image. Saves an mp4 \u2014 it does not land on the board.",
+         hint:"A short clip from this image. It lands on the board beside it \u2014 point at it to play.",
          run:(ctx)=>_canvasStartAnimate(ctx.frames[0])},
         {k:"palette",   label:"Extract Colors", dispatch:"panel", min:1, max:1,
          hint:"Pull a colour palette out of this image. Edit the swatches and save them."},
@@ -16043,6 +16109,13 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         panel.style.minWidth="252px";
 
         const ctx=_canvasMkPanelCtx(list);
+        // Everything here reads a frame's pixels, and a clip's pixels are its first frame.
+        // That is a reasonable thing to want and a terrible thing to discover afterwards.
+        if(list.some(f=>f&&f.kind==="clip")){
+          const cn=mk("div",{fontSize:"8px",color:C.warn,lineHeight:"1.5"});
+          tx(cn,"A clip is read as its first frame here, and every result is a still image.");
+          panel.appendChild(cn);
+        }
         const avail=_canvasModesFor(list.length);
         if(!avail.length){ panel.remove(); return null; }
         if(!avail.some(m=>m.k===ctx.mode)) ctx.mode=avail[0].k;
@@ -16445,8 +16518,8 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         if(!frame) return;
         const {panel,closeBtn}=_canvasMakePanelShell(frame.x+frame.w+12,frame.y,"Animate");
         const note=mk("div",{fontSize:"8px",color:C.dim,lineHeight:"1.5"});
-        tx(note,"The first frame is this image. The clip is saved to your output folder \u2014 "
-          +"it does not appear on the board.");
+        tx(note,"The first frame is this image. The finished clip lands on the board beside "
+          +"it \u2014 point at it to play \u2014 and is saved to your output folder too.");
         const ta=_canvasMkPromptTA("How should it move? e.g. the camera slowly orbits the car");
         ta.value="";
         const lenRow=mk("div",{display:"flex",alignItems:"center",gap:"6px"});
@@ -16512,7 +16585,20 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
               ((o&&(o.images||o.videos))||[]).forEach(v=>{ if(v&&v.filename) file=v; });
             });
             if(!file){ tx(status,"The run finished but produced no clip."); return; }
-            tx(status,"Saved as "+file.filename+" in your output folder.");
+            // On the board, beside its source. The source image is the clip's first frame,
+            // so it doubles as the poster and no extra render is needed to have a still.
+            // Height from the rendered W/H rather than the frame's, because those were
+            // rounded to the multiples of 32 the model wants.
+            const secs=Math.max(1,Math.round((frames-1)/24));
+            const ch=Math.max(1,Math.round(frame.w*H/W));
+            const spot=_canvasFindFreeSpot(frame.x+frame.w+40,frame.y,frame.w,ch);
+            const nf=_canvasAddFrame({x:spot.x,y:spot.y,w:frame.w,h:ch,kind:"clip",
+              filename:file.filename,subfolder:file.subfolder||"",type:file.type||"output",
+              poster:frame.filename||"",posterSub:frame.subfolder||"",
+              posterType:frame.type||"output",secs,name:secs+"s clip"});
+            _canvasSelectFrame(nf.id);
+            _canvasPersistFramesDebounced();
+            tx(status,"On the board, and saved as "+file.filename+".");
             const open=mk("button",{background:C.bg2,color:C.text,border:`1px solid ${C.border}`,
               borderRadius:"5px",padding:"5px 8px",fontSize:"9px",cursor:"pointer",marginTop:"4px"});
             tx(open,"Open clip");
@@ -17544,7 +17630,14 @@ width:"34px",background:C.bg2,border:`1px solid ${C.border}`,borderRadius:"4px",
         const frameEl=e.target.closest&&e.target.closest("[data-canvas-frame]");
         if(!frameEl) return;
         const f=_canvasFrames.find(x=>x.id===+frameEl.dataset.canvasFrame);
-        if(f) _canvasOpenEditor(f);
+        if(!f) return;
+        // Double-click means "open this properly". For a picture that is the editor; for a
+        // clip it is the clip, at full size, with a scrubber.
+        if(f.kind==="clip"){
+          try{ window.open(_canvasFileUrl(f),"_blank"); }catch(e){}
+          return;
+        }
+        _canvasOpenEditor(f);
       });
       _canvasViewport.addEventListener("pointerdown",(e)=>{
         if(canvasPanel.style.display==="none"||(e.button!==0&&e.button!==1)) return;
