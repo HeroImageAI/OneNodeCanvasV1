@@ -54,10 +54,20 @@ and hands you back a shaded line drawing — so this uses the reference-conditio
 
 **Extract Colors** — pull a palette out of an image, edit the swatches, save it to your library.
 
-**Animate** — a short clip from a still, 2, 4 or 6 seconds, at the frame's own aspect ratio. This
-one is an export rather than a board operation: the board holds still frames, so the clip is
-saved as an mp4 beside your images with a button to open it. Needs its own model — see Models
-below.
+**Animate** — a short clip from a still, 2, 4 or 6 seconds, at the frame's own aspect ratio.
+Pick an image, describe the movement, and the finished clip lands on the board beside it.
+Point at it to play, move away to stop; double-click opens it full size. It moves, groups,
+tags, renames and saves with everything else, and the mp4 goes to your output folder too.
+Needs its own model — see Models below.
+
+A clip shows its first frame when it is not playing, which is also what every other tool
+reads off it: run Extract Colors or Variations on a clip and you get the palette of, or
+variations on, that first frame. The Actions panel says so before you press Generate. The
+layer editor declines a clip — there is nothing to paint on.
+
+Expect a partial orbit rather than a full turn: at six seconds LTX comes round about a
+quarter of the way, smoothly and without warping the product, but a complete 360 needs
+several clips stitched together.
 
 **Pose** and **Faceswap** — copy a pose, or a face, from a second image.
 
@@ -320,13 +330,22 @@ prompt says, while the reference-conditioned path does it properly. That meant n
 model and no ControlNet — the capability was already here, behind a mode named for something
 else.
 
-**Animate** — a 2, 4 or 6 second clip from a still via LTX-Video, saved as an mp4.
+**Animate** — a 2, 4 or 6 second clip from a still via LTX-Video. The clip lands on the board
+as a frame that plays when you point at it, and is saved as an mp4 as well.
 
 Also fixed along the way: overlapping full-screen overlays could stack, leaving the lower one
 invisible but still live; un-dismissed generate-boxes and floating panels survived a project
 switch and drifted over the next board; and the selection toolbar did not rebuild after a group
 was created, so the group's own controls stayed out of reach until you reselected. Recently
 deleted gained per-board delete alongside Empty trash.
+
+Four more found by running a whole product design through the node rather than testing the
+features one at a time. The panel opened by the Generate marquee tool could not be clicked at
+all — not its Generate, not its close button — and could be left stranded off the bottom of
+the view, which is where "stuck panels on my canvas" came from. Every floating panel walked
+up and to the left a little further each time its contents changed. Suggest left its reader
+model on the card, and the next render crawled for six minutes because of it. And the
+editor's Generate hid below the fold of its own panel as soon as you switched to Inpaint.
 
 ---
 
